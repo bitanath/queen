@@ -1,3 +1,4 @@
+import "./preload";
 import { render } from "./app";
 import { chatGenerate } from "./queen-ffi";
 

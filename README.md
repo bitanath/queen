@@ -46,6 +46,13 @@ embed ceiling.
 Chat commands: `/search <q>`, `/today [--context]`, `/me`, `/status`,
 `/login [--qr | --token <t>]`, `/logout`, `/help`, `/quit`.
 
+## Credentials
+
+Tokens are stored as dotfiles under `~/.bee/` (`token-<env>`, mode 0600)
+rather than the macOS Keychain. The binary is ad-hoc signed, so its signature
+changes on every build and the Keychain would prompt for your login password on
+each launch. Set `BEE_FORCE_FILE_STORE=0` to use the Keychain instead.
+
 ## Dev (no append step)
 
 ```bash
