@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    // Environment setup & latest features
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false,
+    // Bun + bundler resolve this at runtime and at compile time.
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./bee-cli/sources/*"]
+    }
+  },
+  // Roots only: tsc still checks every upstream file we import, but their
+  // test files stop gating our build. Upstream API breakage surfaces via
+  // bee.ts; upstream test breakage is noise.
+  "include": ["src", "sync-bee.ts"]
+}

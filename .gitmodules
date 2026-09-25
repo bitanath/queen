@@ -1,0 +1,4 @@
+[submodule "tui/bee-cli"]
+	path = tui/bee-cli
+	url = https://github.com/bee-computer/bee-cli.git
+	branch = main

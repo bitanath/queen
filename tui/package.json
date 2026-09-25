@@ -1,0 +1,30 @@
+{
+  "name": "tui",
+  "module": "src/index.tsx",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run sync:bee && bun run --watch src/index.tsx",
+    "build": "bash build.sh",
+    "sync:bee": "bun run sync-bee.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.11",
+    "@opentui/react": "^0.5.11",
+    "date-fns": "^4.4.0",
+    "handlebars": "^4.7.9",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "tweetnacl": "^1.0.3"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
