@@ -1,4 +1,4 @@
-# bee-tui
+# queen
 
 Single-file chat binary (macOS arm64): OpenTUI frontend, Bee API in-process,
 local GGUF inference via a thin elthur dylib. The Bun executable carries
@@ -7,7 +7,7 @@ everything — the dylib is embedded and the model is appended after the code.
 ## Layout
 
 ```
-bee-tui/
+queen/
   build.sh            pick a model, download it, build everything
   models/             downloaded GGUFs (gitignored)
   tui/                OpenTUI + Bun app
@@ -61,5 +61,15 @@ bun install
 ELTHUR_MODEL=$PWD/../models/<file>.gguf bun run src/index.tsx
 ```
 
-`bee-cli` is a submodule tracking upstream `main`; `tui/sync-bee.ts` resets it
-to the tip and bakes the SHA into the binary (skip with `QUEEN_SKIP_SYNC=1`).
+`bee-cli` is a pinned submodule: the parent commit records the exact upstream
+revision, so builds and dev runs never touch the network. To move to a newer
+upstream, bump the pin explicitly and review the breakage it causes:
+
+```bash
+git -C tui/bee-cli fetch origin main
+git -C tui/bee-cli checkout origin/main      # review the diff
+bun run --cwd tui typecheck                  # upstream API breakage surfaces in src/bee.ts
+git add tui/bee-cli && git commit            # commit the new gitlink
+```
+
+The pinned SHA is baked into the binary at build time and shown by `/status`.

@@ -1,12 +1,11 @@
 {
-  "name": "tui",
+  "name": "queen",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run sync:bee && bun run --watch src/index.tsx",
+    "dev": "bun run --watch src/index.tsx",
     "build": "bash build.sh",
-    "sync:bee": "bun run sync-bee.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

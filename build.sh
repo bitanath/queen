@@ -14,7 +14,6 @@
 #   ELTHUR_DIR        elthur checkout used when --dylib is absent (default ../elthur)
 #   QUEEN_MODELS_DIR  download directory (default ./models)
 #   HF_TOKEN          bearer token, for gated/rate-limited downloads
-#   QUEEN_SKIP_SYNC=1 skip the vendor/bee-cli sync
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -34,7 +33,10 @@ falcon-h1  0.5b       tiiuae/Falcon-H1-0.5B-Instruct-GGUF       Falcon-H1-0.5B-I
 falcon-h1  1.5b-deep  tiiuae/Falcon-H1-1.5B-Deep-Instruct-GGUF  Falcon-H1-1.5B-Deep-Instruct-QUANT.gguf
 qwen3.5    0.8b       bartowski/Qwen_Qwen3.5-0.8B-GGUF          Qwen_Qwen3.5-0.8B-QUANT.gguf
 qwen3.5    2b         lmstudio-community/Qwen3.5-2B-GGUF        Qwen3.5-2B-QUANT.gguf
+qwen3.5    4b         lmstudio-community/Qwen3.5-4B-GGUF        Qwen3.5-4B-QUANT.gguf
 falcon-h1r 0.6b       tiiuae/Falcon-H1-Tiny-R-0.6B-GGUF         Falcon-H1R-0.6B-QUANT.gguf
+gemma4     e4b        unsloth/gemma-4-E4B-it-GGUF                gemma-4-E4B-it-QUANT.gguf
+apertus    8b         andreasmartin/apertus-v1.5-8b-text-Q8_0-GGUF apertus-v1.5-8b-text-quant.gguf
 EOF
 }
 
@@ -43,6 +45,8 @@ alias_family() {
     falcon-h1 | falcon | h1) echo "falcon-h1" ;;
     qwen3.5 | qwen | qwen3 | q35) echo "qwen3.5" ;;
     falcon-h1r | h1r | falcon-r | reasoning) echo "falcon-h1r" ;;
+    gemma4 | gemma | e4b) echo "gemma4" ;;
+    apertus | ap) echo "apertus" ;;
     *) return 1 ;;
   esac
 }
@@ -57,7 +61,7 @@ resolve_row() {
   catalog | awk -v f="$1" -v p="$2" '$1 == f && $2 == p { print $3 "|" $4; found = 1 } END { exit found ? 0 : 1 }'
 }
 
-usage() { sed -n '2,17p' "$0"; }
+usage() { sed -n '2,16p' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -83,6 +87,7 @@ if [ -z "$PARAMS" ]; then
   PARAMS="$(lowest_params "$FAMILY")"
 fi
 QUANT_UP="$(printf '%s' "$QUANT" | tr '[:lower:]' '[:upper:]')"
+QUANT_LOWER="$(printf '%s' "$QUANT" | tr '[:upper:]' '[:lower:]')"
 
 if [ -n "$URL" ]; then
   FILE="$(basename "${URL%%\?*}")"
@@ -95,6 +100,7 @@ else
   REPO="${row%|*}"
   MASK="${row#*|}"
   FILE="${MASK/QUANT/$QUANT_UP}"
+  FILE="${FILE/quant/$QUANT_LOWER}"
   URL="https://huggingface.co/$REPO/resolve/main/$FILE"
   echo "==> model: $FAMILY / $PARAMS / $QUANT ($FILE)"
 fi

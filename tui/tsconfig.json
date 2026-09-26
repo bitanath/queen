@@ -35,5 +35,5 @@
   // Roots only: tsc still checks every upstream file we import, but their
   // test files stop gating our build. Upstream API breakage surfaces via
   // bee.ts; upstream test breakage is noise.
-  "include": ["src", "sync-bee.ts"]
+  "include": ["src"]
 }

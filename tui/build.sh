@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Queen: build the single-file Bun executable that carries elthur + a GGUF.
 #
-#   1. sync bee-cli + typecheck
+#   1. typecheck
 #   2. elthur: `zig build` -> outputs/elthur.a (static) + outputs/lib/libelthur.dylib
 #   3. stage the thin dylib so Bun embeds it
 #   4. `bun build --compile`
@@ -9,7 +9,6 @@
 #
 # Usage: ./build.sh [model.gguf]
 #   ELTHUR_DIR     path to the elthur checkout (default ../../elthur)
-#   QUEEN_SKIP_SYNC=1  skip the bee-cli network sync
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -30,21 +29,20 @@ if [ ! -x .venv/bin/python3 ]; then
 fi
 PY=".venv/bin/python3"
 
-if [ "${QUEEN_SKIP_SYNC:-0}" != "1" ]; then
-  echo "==> sync bee-cli"
-  bun run sync-bee.ts
-else
-  echo "==> sync bee-cli (skipped)"
-fi
 echo "==> typecheck"
 bun run typecheck
+
+# Vendor pin: the bee-cli submodule is pinned by git; bake its SHA into the
+# bundle for /status. No network, no generated source file.
+BEE_SHA="$(git -C bee-cli rev-parse HEAD)"
+echo "==> bee-cli: ${BEE_SHA:0:12}"
 
 if [ -n "${QUEEN_DYLIB:-}" ]; then
   DYLIB="$QUEEN_DYLIB"
   echo "==> dylib: $DYLIB (provided)"
 else
-  echo "==> elthur: zig build"
-  ( cd "$ELTHUR" && zig build )
+  echo "==> elthur: scripts/build.sh"
+  ( cd "$ELTHUR" && ./scripts/build.sh )
   DYLIB="$ELTHUR/outputs/lib/libelthur.dylib"
 fi
 
@@ -54,7 +52,8 @@ codesign --force -s - libelthur.dylib
 
 echo "==> bundle"
 mkdir -p dist
-bun build --compile src/index.tsx --target "$TARGET" --outfile "$OUT"
+bun build --compile src/index.tsx --target "$TARGET" --outfile "$OUT" \
+  --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\""
 
 # Sign the Mach-O before appending: the model lives past the code, so the
 # signature stays valid. Re-signing the enlarged file fails codesign's strict

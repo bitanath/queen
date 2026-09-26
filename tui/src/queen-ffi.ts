@@ -24,6 +24,9 @@ const { symbols } = dlopen(libPath, {
   //     bytes written, 0 idle, -1 done, -2 error
   stream_poll: { args: ["ptr", "ptr", "usize"], returns: "i64" },
   stream_free: { args: ["ptr"], returns: "void" },
+  // bool stream_hit_length_limit(void* handle) — true when generation stopped
+  // because the output-token budget (or context window) ran out, not on EOS.
+  stream_hit_length_limit: { args: ["ptr"], returns: "bool" },
   free_string: { args: ["ptr"], returns: "void" },
 });
 
@@ -40,6 +43,14 @@ export class EngineCancelled extends Error {
     this.name = "EngineCancelled";
   }
 }
+
+/// A finished generation plus whether it was cut off by the token budget.
+export type StreamResult = { text: string; truncated: boolean; maxTokens: number };
+
+// Generation budget in output tokens (not a sequence position). The engine
+// reports when it is exhausted via stream_hit_length_limit.
+export const CHAT_MAX_TOKENS = 1024;
+export const FALLBACK_MAX_TOKENS = 512;
 
 const FALLBACK_SYSTEM =
   "You are Queen, a friendly offline assistant inside a chat app. " +
@@ -125,16 +136,16 @@ export function chatGenerate(prompt: string): string {
 }
 
 /// Streaming generation. Calls onChunk with the full text so far as tokens
-/// arrive; resolves with the complete text. Never blocks the event loop: the
-/// engine runs on its own thread and TS polls, so spinners animate and esc
-/// cancels mid-stream.
+/// arrive; resolves with the complete text and whether the token budget cut it
+/// off. Never blocks the event loop: the engine runs on its own thread and TS
+/// polls, so spinners animate and esc cancels mid-stream.
 export async function streamGenerate(
   prompt: string,
   system: string,
   maxTokens: number,
   onChunk: (textSoFar: string) => void,
   isCancelled: () => boolean = () => false,
-): Promise<string> {
+): Promise<StreamResult> {
   const handle = start(prompt, system, maxTokens);
   const out = new Uint8Array(65536);
   const decoder = new TextDecoder();
@@ -153,9 +164,10 @@ export async function streamGenerate(
         await Bun.sleep(30);
       }
     }
+    const truncated = symbols.stream_hit_length_limit(handle);
     text += decoder.decode();
     onChunk(text);
-    return text;
+    return { text, truncated, maxTokens };
   } finally {
     symbols.stream_free(handle);
   }
@@ -166,8 +178,8 @@ export function streamChat(
   prompt: string,
   onChunk: (textSoFar: string) => void,
   isCancelled?: () => boolean,
-): Promise<string> {
-  return streamGenerate(prompt, CHAT_SYSTEM, 256, onChunk, isCancelled);
+): Promise<StreamResult> {
+  return streamGenerate(prompt, CHAT_SYSTEM, CHAT_MAX_TOKENS, onChunk, isCancelled);
 }
 
 /// Streaming logged-out fallback. Engine failure becomes the static text
@@ -177,12 +189,12 @@ export async function streamFallback(
   detail: string,
   onChunk: (textSoFar: string) => void,
   isCancelled?: () => boolean,
-): Promise<string> {
+): Promise<StreamResult> {
   const userMsg =
     `The user ran ${attempted} while logged out of Bee. ${detail} ` +
     "Write a short friendly message for them in plain sentences.";
   try {
-    return await streamGenerate(userMsg, FALLBACK_SYSTEM, 128, onChunk, isCancelled);
+    return await streamGenerate(userMsg, FALLBACK_SYSTEM, FALLBACK_MAX_TOKENS, onChunk, isCancelled);
   } catch (e) {
     if (e instanceof EngineCancelled) throw e;
     const text =
@@ -190,7 +202,7 @@ export async function streamFallback(
       "Run /login in this chat to connect your account, and I'll fetch it live. " +
       "Meanwhile, ask me anything and I'll help from general knowledge.";
     onChunk(text);
-    return text;
+    return { text, truncated: false, maxTokens: FALLBACK_MAX_TOKENS };
   }
 }
 

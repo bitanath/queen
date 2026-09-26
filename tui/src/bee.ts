@@ -31,7 +31,9 @@ import {
   formatRecordMarkdown,
   resolveTimeZone,
 } from "@/utils/markdown";
-import { BEE_CLI_SHA } from "./bee-sha";
+// Baked at build time from the pinned bee-cli submodule
+// (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
+const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev";
 
 export class NotLoggedIn extends Error {
   constructor() {

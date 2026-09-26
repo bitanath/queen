@@ -19,7 +19,7 @@ import {
   searchBee,
   startPairing,
 } from "./bee";
-import { EngineCancelled, streamChat, streamFallback } from "./queen-ffi";
+import { EngineCancelled, streamChat, streamFallback, type StreamResult } from "./queen-ffi";
 import { Spinner } from "./spinner";
 
 type Role = "user" | "queen" | "error" | "system";
@@ -95,14 +95,17 @@ function App() {
     }
   });
 
-  const streamQueen = async (fn: (onChunk: (t: string) => void) => Promise<string>) => {
+  const streamQueen = async (fn: (onChunk: (t: string) => void) => Promise<StreamResult>) => {
     const id = pushStreaming();
     let latest = "";
     try {
-      await fn((t) => {
+      const res = await fn((t) => {
         latest = t;
         updateMsg(id, t);
       });
+      if (res.truncated) {
+        push("system", `…response stopped at the ${res.maxTokens}-token limit — ask me to continue.`);
+      }
     } catch (e) {
       if (e instanceof EngineCancelled) {
         updateMsg(id, `${latest} …cancelled`);
@@ -121,12 +124,15 @@ function App() {
       if (isNotLoggedIn(e)) {
         const id = pushStreaming();
         try {
-          await streamFallback(
+          const res = await streamFallback(
             attempted,
             detail,
             (t) => updateMsg(id, `[offline queen]\n\n${t}`),
             () => cancelRef.current,
           );
+          if (res.truncated) {
+            push("system", `…response stopped at the ${res.maxTokens}-token limit — ask me to continue.`);
+          }
         } catch (e2) {
           if (e2 instanceof EngineCancelled) updateMsg(id, "…cancelled");
           else updateMsg(id, `[offline queen]\n\nerror: ${e2 instanceof Error ? e2.message : String(e2)}`);
@@ -252,7 +258,7 @@ function App() {
       <box>
         <text attributes={TextAttributes.BOLD}>queen</text>
         <text attributes={TextAttributes.DIM}>
-          {`  elthur/qwen3.5-2b · prod · ${auth.loggedIn ? `● ${auth.name ?? "connected"}` : "○ logged out"}`}
+          {`  queen-agent · prod · ${auth.loggedIn ? `● ${auth.name ?? "connected"}` : "○ logged out"}`}
         </text>
       </box>
       <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
