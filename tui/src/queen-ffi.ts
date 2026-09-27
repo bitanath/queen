@@ -62,14 +62,10 @@ export type StreamResult = { text: string; truncated: boolean; maxTokens: number
 export const CHAT_MAX_TOKENS = 1024;
 export const FALLBACK_MAX_TOKENS = 512;
 
-const FALLBACK_SYSTEM =
-  "You are Queen, a friendly offline assistant inside a chat app. " +
-  "The user is not logged in to Bee, so no live Bee data is available. " +
-  "Explain briefly that running /login in this chat unlocks live data, then help " +
-  "with their request as best you can from general knowledge. " +
-  "Write in plain sentences, no code formatting. Keep it under 120 words.";
-
-const CHAT_SYSTEM =
+// elthur bakes the system prompt into the model at load time and ignores the
+// per-call `system` argument afterwards, so every path loads with CHAT_SYSTEM
+// (the fallback wording lives in the user message instead).
+export const CHAT_SYSTEM =
   "You are Queen, a friendly assistant inside a chat app. " +
   "The user may or may not be logged in to Bee; if they ask for live " +
   "personal data you don't have, briefly suggest the /search or /today " +
@@ -87,12 +83,16 @@ function z(s: string): Uint8Array {
 }
 
 // The model is created once (loading from the appended blob) and reused; the
-// engine resets its context per stream_start_model call.
+// engine resets its context per stream_start_model call. Note: elthur bakes the
+// system prompt into the model at load time — the `system` argument to the
+// stream_* calls is ignored once a model exists, so the first caller wins.
 let model: Pointer | null = null;
+let modelSystem: string | null = null;
 
-function ensureModel(): Pointer {
+function ensureModel(system: string = CHAT_SYSTEM): Pointer {
   if (model === null) {
-    const systemZ = z(CHAT_SYSTEM);
+    modelSystem = system;
+    const systemZ = z(system);
     model = symbols.model_create_ex(systemZ, 512, 0.3, 0.9, 40);
     void systemZ;
     if (model === null) throw new EngineFailed();
@@ -100,22 +100,69 @@ function ensureModel(): Pointer {
   return model;
 }
 
-// ChatMessageC { role: char*, content: char* } — 16 bytes, u64-aligned.
-function start(prompt: string, system: string, maxTokens: number): Pointer {
-  const m = ensureModel();
-  const role = z("user");
-  const content = z(prompt);
+/// The system prompt the engine model was loaded with (null before first use).
+export function engineModelSystem(): string | null {
+  return modelSystem;
+}
+
+/// One engine turn. `role` is rendered verbatim by elthur's chat encoders, so
+/// "user"/"assistant" multi-turn history works; unknown roles pass through too.
+export type EngineMessage = { role: string; content: string };
+
+/// Low-level entry point: start a streamed generation over an arbitrary message
+/// list, optionally declaring an OpenAI-style tools JSON array. The returned
+/// handle is drained with pollStream() and freed with freeStream().
+export function beginStream(
+  messages: EngineMessage[],
+  system: string,
+  toolsJson: string | null,
+  maxTokens: number,
+): Pointer {
+  const m = ensureModel(system);
+  // ChatMessageC { role: char*, content: char* } — 16 bytes per message.
+  const zipped = messages.map((msg) => ({ role: z(msg.role), content: z(msg.content) }));
+  const msgs = new BigUint64Array(messages.length * 2);
+  for (let i = 0; i < messages.length; i++) {
+    const p = zipped[i]!;
+    msgs[i * 2] = BigInt(ptr(p.role));
+    msgs[i * 2 + 1] = BigInt(ptr(p.content));
+  }
   const systemZ = z(system);
-  const msgs = new BigUint64Array(2);
-  msgs[0] = BigInt(ptr(role));
-  msgs[1] = BigInt(ptr(content));
-  const handle = symbols.stream_start_model(m, msgs, 1, systemZ, maxTokens, 0.3, 0.9, 40);
+  const toolsZ = toolsJson !== null ? z(toolsJson) : null;
+  const handle = toolsZ
+    ? symbols.stream_start_model_ex(m, msgs, messages.length, systemZ, toolsZ, maxTokens, 0.3, 0.9, 40)
+    : symbols.stream_start_model(m, msgs, messages.length, systemZ, maxTokens, 0.3, 0.9, 40);
   // Keep backing buffers alive across the call (sync, but be explicit).
-  void role;
-  void content;
+  void zipped;
+  void msgs;
   void systemZ;
+  void toolsZ;
   if (handle === null) throw new EngineFailed();
   return handle;
+}
+
+/// One poll step: >0 bytes written into `out`, 0 idle, -1 done, -2 error.
+export function pollStream(handle: Pointer, out: Uint8Array): number {
+  return Number(symbols.stream_poll(handle, out, out.length));
+}
+
+/// Parsed tool calls for a finished stream (empty when none).
+export function toolCallsOf(handle: Pointer): ToolCall[] {
+  return readToolCalls(handle);
+}
+
+/// Whether generation stopped at the output-token budget rather than EOS.
+export function streamTruncated(handle: Pointer): boolean {
+  return symbols.stream_hit_length_limit(handle);
+}
+
+/// Release a stream handle (cancels the engine thread and joins it).
+export function freeStream(handle: Pointer): void {
+  symbols.stream_free(handle);
+}
+
+function start(prompt: string, system: string, maxTokens: number): Pointer {
+  return beginStream([{ role: "user", content: prompt }], system, null, maxTokens);
 }
 
 /// Raw single-turn generation. Returns the engine's text; throws EngineFailed
@@ -220,7 +267,7 @@ export async function streamGenerateWithTools(
   onChunk: (textSoFar: string) => void,
   isCancelled: () => boolean = () => false,
 ): Promise<ToolStreamResult> {
-  const m = ensureModel();
+  const m = ensureModel(system);
   const role = z("user");
   const content = z(prompt);
   const systemZ = z(system);
@@ -284,7 +331,7 @@ export async function streamFallback(
     `The user ran ${attempted} while logged out of Bee. ${detail} ` +
     "Write a short friendly message for them in plain sentences.";
   try {
-    return await streamGenerate(userMsg, FALLBACK_SYSTEM, FALLBACK_MAX_TOKENS, onChunk, isCancelled);
+    return await streamGenerate(userMsg, CHAT_SYSTEM, FALLBACK_MAX_TOKENS, onChunk, isCancelled);
   } catch (e) {
     if (e instanceof EngineCancelled) throw e;
     const text =
@@ -303,7 +350,7 @@ export function friendlyLoggedOut(attempted: string, detail: string): string {
     `The user ran ${attempted} while logged out of Bee. ${detail} ` +
     "Write a short friendly message for them in plain sentences.";
   try {
-    return generate(userMsg, FALLBACK_SYSTEM, 128);
+    return generate(userMsg, CHAT_SYSTEM, 128);
   } catch {
     return (
       "You're logged out of Bee, so I can't pull live data right now. " +

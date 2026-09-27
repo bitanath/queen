@@ -12,6 +12,7 @@
 #   QUEEN_MODEL    model to append when no positional model is given
 set -euo pipefail
 cd "$(dirname "$0")"
+ROOT="$(cd .. && pwd)"
 
 ELTHUR="${ELTHUR_DIR:-../../elthur}"
 NAME="queen"
@@ -31,13 +32,6 @@ if [ ! -f "$MODEL" ]; then
   echo "model not found: $MODEL" >&2
   exit 1
 fi
-
-# Python helper runs from a local venv; nothing is installed globally.
-if [ ! -x .venv/bin/python3 ]; then
-  echo "==> create .venv"
-  python3 -m venv .venv
-fi
-PY=".venv/bin/python3"
 
 echo "==> typecheck"
 bun run typecheck
@@ -72,5 +66,5 @@ echo "==> sign"
 codesign --force -s - "$OUT"
 
 echo "==> append model"
-"$PY" scripts/append_model.py "$MODEL" "$OUT"
+"$ROOT/build_append" "$MODEL" "$OUT"
 echo "built $OUT ($(du -h "$OUT" | cut -f1))"

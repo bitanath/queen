@@ -10,11 +10,12 @@ everything — the dylib is embedded and the model is appended after the code.
 queen/
   build               build one variant (pick a model, download it, build)
   build_all           build queen-small / queen-medium / queen-high in one go
+  build_append        append a GGUF + ELTHBLOB trailer to a built executable
   models/             downloaded GGUFs (gitignored)
   tui/                OpenTUI + Bun app
     bee-cli/          submodule: upstream Bee API (sources imported by tui)
     build.sh          stage dylib -> bun compile -> append model -> sign
-    src/  scripts/
+    src/
     libelthur.dylib   staged thin dylib (gitignored)
     dist/queen        the built executable (gitignored)
 ```
@@ -43,10 +44,10 @@ Passing `-m` builds a single model as `dist/queen`; add `--name <n>` to emit
 `dist/<n>`. Families: `falcon-h1`, `qwen3.5`, `falcon-h1r`, `gemma4`, `apertus`,
 `lfm2.5`. `--params` defaults to the lowest option listed for the family;
 `--quant` defaults to `q8_0`. The GGUF is downloaded to `models/` (resumable;
-skipped if present), then `tui/build.sh` embeds the elthur dylib and appends the
-GGUF + an `ELTHBLOB` trailer (elthur is built once and then reused). elthur maps
-the appended model at runtime (`elthur/core/hosts.zig`), so there is no 2 GiB
-embed ceiling.
+skipped if present), then `tui/build.sh` embeds the elthur dylib and runs the
+root `build_append` to append the GGUF + an `ELTHBLOB` trailer (elthur is built
+once and then reused). elthur maps the appended model at runtime
+(`elthur/core/hosts.zig`), so there is no 2 GiB embed ceiling.
 
 ## Run
 
@@ -55,9 +56,11 @@ embed ceiling.
 ```
 
 Chat commands: `/search <q>`, `/today [--context]`, `/me`, `/status`,
-`/login [--qr | --token <t>]`, `/logout`, `/help`, `/quit`. Plain text chats
-with the local model and can call `get_weather` — e.g. "What is the weather in
-Tokyo?" fetches the current conditions and the next few hours from wttr.in.
+`/login [--qr | --token <t>]`, `/logout`, `/help`, `/quit`. Plain text runs
+through a Strands Agents loop backed by the local GGUF: the agent owns the
+conversation history (memory) and the tool loop, and can call `get_weather` —
+e.g. "What is the weather in Tokyo?" fetches the current conditions and the next
+few hours from wttr.in, then answers.
 
 ## Credentials
 

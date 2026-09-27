@@ -17,6 +17,7 @@
   "dependencies": {
     "@opentui/core": "^0.5.11",
     "@opentui/react": "^0.5.11",
+    "@strands-agents/sdk": "^1.19.0",
     "date-fns": "^4.4.0",
     "handlebars": "^4.7.9",
     "qrcode": "^1.5.4",

@@ -17,9 +17,10 @@ import {
   searchBee,
   startPairing,
 } from "./bee";
-import { EngineCancelled, streamChatWithTools, streamFallback, type ToolStreamResult } from "./queen-ffi";
+import { EngineCancelled, CHAT_SYSTEM, streamFallback } from "./queen-ffi";
+import { createQueenAgent, ElthurModel } from "./strands-model";
 import { Spinner } from "./components/spinner";
-import { TOOLS_JSON, runTool, stripToolMarkup } from "./tools";
+import { stripToolMarkup } from "./tools";
 
 type Role = "user" | "queen" | "error" | "system";
 type Msg = { id: number; role: Role; text: string };
@@ -55,6 +56,16 @@ export function Chat() {
   const idRef = useRef(1);
   const cancelRef = useRef(false);
 
+  // One Strands agent per chat pane: it owns conversation memory and the tool
+  // loop. The model instance is kept alongside so we can read truncation state.
+  const modelRef = useRef<ElthurModel | null>(null);
+  const agentRef = useRef<ReturnType<typeof createQueenAgent> | null>(null);
+  if (agentRef.current === null) {
+    const model = new ElthurModel({ systemPrompt: CHAT_SYSTEM });
+    modelRef.current = model;
+    agentRef.current = createQueenAgent(model);
+  }
+
   const push = (role: Role, text: string) => {
     const id = idRef.current++;
     setMsgs((m) => [...m, { id, role, text }]);
@@ -81,40 +92,68 @@ export function Chat() {
     if (key.ctrl && key.name === "c") quit();
     if (key.name === "escape") {
       cancelRef.current = true;
+      agentRef.current?.cancel();
       setValue("");
     }
   });
 
-  const streamQueen = async (fn: (onChunk: (t: string) => void) => Promise<ToolStreamResult>) => {
+  // Stream one turn through the Strands agent. The agent owns memory; we render
+  // its events: live text deltas, tool-call progress, and tool results. Tool
+  // results become their own segments so the model's follow-up answer joins them.
+  const streamAgent = async (text: string) => {
+    const agent = agentRef.current;
+    const model = modelRef.current;
+    if (!agent || !model) return;
     const id = pushStreaming();
-    let latest = "";
+    const segments: string[] = [];
+    let live = "";
+    let status = "";
+    const render = () => updateMsg(id, [...segments, status, live].filter((s) => s.trim().length > 0).join("\n\n"));
     try {
-      const res = await fn((t) => {
-        latest = t;
-        updateMsg(id, stripToolMarkup(t));
-      });
-      if (res.truncated) {
-        push("system", `…response stopped at the ${res.maxTokens}-token limit — ask me to continue.`);
-      }
-      const call = res.toolCalls.find(
-        (c) => c.name === "get_weather" && (c.arguments?.city ?? "").trim().length > 0,
-      );
-      if (call) {
-        const city = (call.arguments?.city ?? "").trim();
-        updateMsg(id, `Checking the weather in ${city}…`);
-        try {
-          updateMsg(id, await runTool(call));
-        } catch (e) {
-          updateMsg(id, `weather lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+      for await (const event of agent.stream(text)) {
+        if (event.type === "modelStreamUpdateEvent") {
+          const e = event.event;
+          if (e.type === "modelContentBlockDeltaEvent" && e.delta.type === "textDelta") {
+            status = "";
+            live += e.delta.text;
+            render();
+          } else if (e.type === "modelContentBlockStartEvent" && e.start?.type === "toolUseStart") {
+            if (live.trim().length > 0) segments.push(live);
+            live = "";
+            status = e.start.name === "get_weather" ? "Checking the weather…" : `Running ${e.start.name}…`;
+            render();
+          }
+        } else if (event.type === "toolResultEvent") {
+          const md = event.result.content
+            .map((item) =>
+              item.type === "textBlock"
+                ? item.text
+                : item.type === "jsonBlock"
+                  ? JSON.stringify(item.json, null, 2)
+                  : "",
+            )
+            .filter((s) => s.length > 0)
+            .join("\n");
+          status = "";
+          if (md.trim().length > 0) segments.push(md);
+          render();
         }
-      } else if (!stripToolMarkup(latest).trim()) {
+      }
+      if (model.lastTruncated) {
+        push("system", `…response stopped at the ${model.lastMaxTokens}-token limit — ask me to continue.`);
+      }
+      if (model.lastStopReason === "cancelled") {
+        updateMsg(id, `${stripToolMarkup([...segments, live].join("\n\n"))} …cancelled`);
+        return;
+      }
+      if (stripToolMarkup([...segments, live].join("\n\n")).trim().length === 0 && status.length === 0) {
         updateMsg(id, "(no response)");
       }
     } catch (e) {
       if (e instanceof EngineCancelled) {
-        updateMsg(id, `${stripToolMarkup(latest)} …cancelled`);
+        updateMsg(id, `${stripToolMarkup([...segments, live].join("\n\n"))} …cancelled`);
       } else {
-        throw e;
+        updateMsg(id, `error: ${e instanceof Error ? e.message : String(e)}`);
       }
     } finally {
       setStreamingId((cur) => (cur === id ? null : cur));
@@ -245,9 +284,7 @@ export function Chat() {
     try {
       if (text.startsWith("/")) await runCommand(text);
       else {
-        await streamQueen((onChunk) =>
-          streamChatWithTools(text, TOOLS_JSON, onChunk, () => cancelRef.current),
-        );
+        await streamAgent(text);
       }
     } finally {
       setLastMs(Date.now() - t0);

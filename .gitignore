@@ -11,7 +11,7 @@ out/
 models/
 *.gguf
 
-# python venv for the append helper (stdlib only, never global)
+# python venv (legacy, if one lingers from before the shell append helper)
 .venv/
 
 # caches / coverage / OS / logs

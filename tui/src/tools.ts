@@ -1,6 +1,8 @@
 // Tool surface for queen. One tool for now: get_weather via wttr.in, rendered
 // as compact markdown (current conditions + the next few hours).
 
+import { FunctionTool, type JSONSchema } from "@strands-agents/sdk";
+
 export type ToolCall = { name: string; arguments: Record<string, string> };
 
 export const WEATHER_TOOL = {
@@ -132,3 +134,16 @@ export async function runTool(call: ToolCall): Promise<string> {
   }
   throw new Error(`unknown tool: ${call.name}`);
 }
+
+// Strands tool surface. Same schema as WEATHER_TOOL, wrapped as a FunctionTool
+// so the agent loop can execute it and feed the result back to the model.
+export const weatherTool = new FunctionTool({
+  name: "get_weather",
+  description: "Get the current weather and the next few hours for a city",
+  inputSchema: WEATHER_TOOL.function.parameters as JSONSchema,
+  callback: async (input) => {
+    const city = String((input as { city?: unknown } | null)?.city ?? "").trim();
+    if (!city) throw new Error("get_weather: missing city");
+    return getWeather(city);
+  },
+});
