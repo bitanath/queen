@@ -7,15 +7,25 @@
 #   4. `bun build --compile`
 #   5. append the GGUF + ELTHBLOB trailer (idempotent) and codesign
 #
-# Usage: ./build.sh [model.gguf]
+# Usage: ./build.sh [--name queen-small] [model.gguf]
 #   ELTHUR_DIR     path to the elthur checkout (default ../../elthur)
+#   QUEEN_MODEL    model to append when no positional model is given
 set -euo pipefail
 cd "$(dirname "$0")"
 
 ELTHUR="${ELTHUR_DIR:-../../elthur}"
-MODEL="${1:-${QUEEN_MODEL:-$ELTHUR/core/assets/Qwen3.5-2B-Q8_0.gguf}}"
+NAME="queen"
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) NAME="${2:-}"; shift 2 ;;
+    -h | --help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+MODEL="${POSITIONAL[0]:-${QUEEN_MODEL:-$ELTHUR/core/assets/Qwen3.5-2B-Q8_0.gguf}}"
 TARGET="bun-darwin-arm64"
-OUT="dist/queen"
+OUT="dist/$NAME"
 
 if [ ! -f "$MODEL" ]; then
   echo "model not found: $MODEL" >&2

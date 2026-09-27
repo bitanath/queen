@@ -1,6 +1,7 @@
 import "./preload";
 import { render } from "./app";
-import { chatGenerate } from "./queen-ffi";
+import { chatGenerate, streamChatWithTools } from "./queen-ffi";
+import { TOOLS_JSON, runTool, stripToolMarkup } from "./tools";
 
 // QUEEN_SMOKE=1 <prompt>: one blocking generation, print it, exit. Verifies the
 // embedded dylib + the model appended to this executable without a terminal.
@@ -12,6 +13,24 @@ if (process.env.QUEEN_SMOKE) {
     console.error("QUEEN_SMOKE_ERROR:", e instanceof Error ? e.message : String(e));
     process.exitCode = 1;
   }
+} else if (process.env.QUEEN_TOOL_SMOKE) {
+  // QUEEN_TOOL_SMOKE="<prompt>": one tool-enabled generation, then run the
+  // returned call. Same idea as QUEEN_SMOKE, for the tool path.
+  const prompt = process.env.QUEEN_TOOL_SMOKE;
+  void (async () => {
+    try {
+      const res = await streamChatWithTools(prompt, TOOLS_JSON, () => {}, () => false);
+      console.log("QUEEN_TOOL_SMOKE_CALLS:", JSON.stringify(res.toolCalls));
+      console.log("QUEEN_TOOL_SMOKE_TEXT:", JSON.stringify(stripToolMarkup(res.text)));
+      const call = res.toolCalls.find(
+        (c) => c.name === "get_weather" && (c.arguments?.city ?? "").trim().length > 0,
+      );
+      if (call) console.log("QUEEN_TOOL_SMOKE_RESULT:\n" + (await runTool(call)));
+    } catch (e) {
+      console.error("QUEEN_TOOL_SMOKE_ERROR:", e instanceof Error ? e.message : String(e));
+      process.exitCode = 1;
+    }
+  })();
 } else {
   render();
 }

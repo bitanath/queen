@@ -1,5 +1,6 @@
 import { CString, dlopen, ptr, type Pointer } from "bun:ffi";
 import libPath from "../libelthur.dylib" with { type: "file" };
+import type { ToolCall } from "./tools";
 
 // elthur engine bridge. Bun embeds the thin code-only dylib in the compiled
 // executable; the GGUF is appended to this executable and mapped at runtime by
@@ -20,6 +21,15 @@ const { symbols } = dlopen(libPath, {
     args: ["ptr", "ptr", "usize", "cstring", "i32", "f64", "f64", "i32"],
     returns: "ptr",
   },
+  // Same as stream_start_model, plus an OpenAI-style tools JSON array. Parsed
+  // tool calls are read back with stream_tool_calls once the stream is done.
+  stream_start_model_ex: {
+    args: ["ptr", "ptr", "usize", "cstring", "cstring", "i32", "f64", "f64", "i32"],
+    returns: "ptr",
+  },
+  // char* stream_tool_calls(void* handle) -> [{"name":..,"arguments":{..}}]
+  //   or NULL; free with free_string().
+  stream_tool_calls: { args: ["ptr"], returns: "ptr" },
   // isize stream_poll(void* handle, char* out, size_t cap)
   //     bytes written, 0 idle, -1 done, -2 error
   stream_poll: { args: ["ptr", "ptr", "usize"], returns: "i64" },
@@ -180,6 +190,86 @@ export function streamChat(
   isCancelled?: () => boolean,
 ): Promise<StreamResult> {
   return streamGenerate(prompt, CHAT_SYSTEM, CHAT_MAX_TOKENS, onChunk, isCancelled);
+}
+
+/// A finished tool-enabled generation: the text plus any parsed calls.
+export type ToolStreamResult = StreamResult & { toolCalls: ToolCall[] };
+
+function readToolCalls(handle: Pointer): ToolCall[] {
+  const raw = symbols.stream_tool_calls(handle);
+  if (raw === null) return [];
+  const json = new CString(raw).toString();
+  symbols.free_string(raw);
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? (parsed as ToolCall[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/// Streaming generation with tools. The engine renders the tools into the
+/// prompt (Qwen system preamble, LFM system tool list) and returns parsed calls
+/// once generation finishes.
+export async function streamGenerateWithTools(
+  prompt: string,
+  system: string,
+  maxTokens: number,
+  toolsJson: string,
+  onChunk: (textSoFar: string) => void,
+  isCancelled: () => boolean = () => false,
+): Promise<ToolStreamResult> {
+  const m = ensureModel();
+  const role = z("user");
+  const content = z(prompt);
+  const systemZ = z(system);
+  const toolsZ = z(toolsJson);
+  const msgs = new BigUint64Array(2);
+  msgs[0] = BigInt(ptr(role));
+  msgs[1] = BigInt(ptr(content));
+  const handle = symbols.stream_start_model_ex(m, msgs, 1, systemZ, toolsZ, maxTokens, 0.3, 0.9, 40);
+  // Keep backing buffers alive across the call (sync, but be explicit).
+  void role;
+  void content;
+  void systemZ;
+  void toolsZ;
+  if (handle === null) throw new EngineFailed();
+
+  const out = new Uint8Array(65536);
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    for (;;) {
+      if (isCancelled()) throw new EngineCancelled();
+      const n = Number(symbols.stream_poll(handle, out, out.length));
+      if (n === -2) throw new EngineFailed();
+      if (n > 0) {
+        text += decoder.decode(out.subarray(0, n), { stream: true });
+        onChunk(text);
+      } else if (n === -1) {
+        break;
+      } else {
+        await Bun.sleep(30);
+      }
+    }
+    const truncated = symbols.stream_hit_length_limit(handle);
+    text += decoder.decode();
+    onChunk(text);
+    return { text, truncated, maxTokens, toolCalls: readToolCalls(handle) };
+  } finally {
+    symbols.stream_free(handle);
+  }
+}
+
+/// Streaming chat with the queen tool surface.
+export function streamChatWithTools(
+  prompt: string,
+  toolsJson: string,
+  onChunk: (textSoFar: string) => void,
+  isCancelled?: () => boolean,
+): Promise<ToolStreamResult> {
+  return streamGenerateWithTools(prompt, CHAT_SYSTEM, CHAT_MAX_TOKENS, toolsJson, onChunk, isCancelled);
 }
 
 /// Streaming logged-out fallback. Engine failure becomes the static text
