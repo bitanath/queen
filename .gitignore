@@ -7,10 +7,6 @@ dist/
 out/
 *.tgz
 
-# staged native dylib (regenerable: elthur `zig build` -> outputs/lib/libelthur.dylib)
-tui/libelthur.dylib
-tui/libelthur.so
-
 # downloaded models
 models/
 *.gguf
