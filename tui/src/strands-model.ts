@@ -1,9 +1,3 @@
-// Strands Agents integration for the elthur engine. ElthurModel is a Strands
-// `Model` provider that drives the embedded dylib: it serializes the agent's
-// message history into elthur's ChatMessageC format, sends the OpenAI-style
-// tools JSON the engine understands, and maps the engine's streamed text plus
-// parsed tool calls back into Strands `ModelStreamEvent`s. Strands owns the
-// conversation history (memory) and the tool loop; the library is untouched.
 import {
   Agent,
   Model,
@@ -28,15 +22,13 @@ import {
 } from "./queen-ffi";
 import { stripToolMarkup, weatherTool } from "./tools";
 
-// elthur loads the model with a fixed context_size of 4096 (see index.zig).
+
 const CONTEXT_WINDOW = 4096;
 const DEFAULT_MAX_TOKENS = 1024;
 
-// Markers the engine's tool parser may emit, mirrored from tools.ts.
 const OPEN_TAGS = ["<tool_call>", "<|tool_call_start|>"];
 
 export type ElthurModelConfig = BaseModelConfig & {
-  /** Fixed system prompt. elthur bakes this into the model on first load. */
   systemPrompt?: string;
 };
 
@@ -90,9 +82,7 @@ function renderToolResult(block: {
     .join("\n");
 }
 
-// Flatten Strands messages into elthur turns. The engine has no native tool
-// role, so tool-use is rendered as the <tool_call> markup its encoders teach,
-// and tool results as plain text in the following (user) turn.
+//NOTE Flatten Strands messages, no native tool role, so tool-use rendered as <tool_call> markup and results as plain text in the following (user) turn.
 function toEngineMessages(messages: Message[]): EngineMessage[] {
   const out: EngineMessage[] = [];
   for (const message of messages) {
@@ -109,7 +99,7 @@ function toEngineMessages(messages: Message[]): EngineMessage[] {
           parts.push(renderToolResult(block));
           break;
         default:
-          break; // reasoning/cache/guard/media are not sent to the local engine
+          break; //TODO reasoning/cache/guard/media are not sent to the local engine
       }
     }
     const content = parts.join("\n").trim();
@@ -118,9 +108,7 @@ function toEngineMessages(messages: Message[]): EngineMessage[] {
   return out;
 }
 
-// Hold back a trailing string that could still grow into a tool-call marker, so
-// incremental stripping never emits partial markup. stripToolMarkup drops an
-// unterminated span, so once held back, output only ever grows.
+// FIXME Hold back a trailing string that could still grow into a tool-call marker
 function holdBackPartialMarker(text: string): string {
   let cut = text.length;
   for (const open of OPEN_TAGS) {
@@ -138,11 +126,8 @@ function holdBackPartialMarker(text: string): string {
 export class ElthurModel extends Model<ElthurModelConfig> {
   private config: ElthurModelConfig;
 
-  /** Whether the most recent generation hit the output-token budget. */
   lastTruncated = false;
-  /** The budget of the most recent generation. */
   lastMaxTokens = DEFAULT_MAX_TOKENS;
-  /** The stop reason of the most recent model call. */
   lastStopReason: StopReason = "endTurn";
 
   constructor(config: ElthurModelConfig = {}) {
@@ -245,8 +230,7 @@ export class ElthurModel extends Model<ElthurModelConfig> {
   }
 }
 
-/// Build the queen chat agent: local elthur model, the weather tool, and a
-/// bounded sliding-window history so the 4k engine context never overflows.
+//TODO create proper agent with requisite tools
 export function createQueenAgent(
   model: ElthurModel = new ElthurModel({ systemPrompt: CHAT_SYSTEM }),
 ): Agent {
@@ -254,10 +238,8 @@ export function createQueenAgent(
     model,
     tools: [weatherTool],
     systemPrompt: CHAT_SYSTEM,
-    // Never print to the TUI's stdout.
-    printer: false,
-    // Engine failures should surface, not silently retry in a loop.
-    retryStrategy: null,
+    printer: false, //HACK Never print to the TUI's stdout.
+    retryStrategy: null,//FIXME Engine failures should surface, not silently retry in a loop.
     conversationManager: new SlidingWindowConversationManager({ windowSize: 10 }),
   });
 }

@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Build one self-contained queen executable from an elthur dylib + a GGUF.
+# Queen: build one self-contained executable from an elthur dylib + a GGUF.
 #
 #   ./build --list
 #   ./build -m qwen3.5 -p 0.8b -q q6_k --name queen-medium
 #   ./build -m falcon-h1 --dylib /path/to/libelthur.dylib
+#   ./build [model.gguf] [--name queen-small]
 #
 # For all three queen-* variants in one go use ./build_all.
 #
-# Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5
+# Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5, minicpm5
 # Single-model defaults: --model falcon-h1, --params <lowest listed>, --quant q8_0.
 # Output: tui/dist/$NAME (default: queen).
 #
 # Env:
 #   ELTHUR_DIR        elthur checkout used when --dylib is absent (default ../elthur)
 #   QUEEN_MODELS_DIR  download directory (default ./models)
+#   QUEEN_DYLIB       prebuilt dylib to stage (overridden by --dylib)
+#   QUEEN_MODEL       model file to use when no model/url/--model is given
 #   QUEEN_REBUILD_DYLIB  force an elthur rebuild instead of reusing a built dylib
 #   HF_TOKEN          bearer token, for gated/rate-limited downloads
 set -euo pipefail
@@ -29,6 +32,7 @@ QUANT="q8_0"
 NAME="queen"
 DYLIB=""
 URL=""
+POSITIONAL=()
 
 # family  params       repo                                        filename template (QUANT substituted)
 catalog() {
@@ -42,6 +46,7 @@ falcon-h1r 0.6b       tiiuae/Falcon-H1-Tiny-R-0.6B-GGUF         Falcon-H1R-0.6B-
 gemma4     e4b        unsloth/gemma-4-E4B-it-GGUF                gemma-4-E4B-it-QUANT.gguf
 apertus    8b         andreasmartin/apertus-v1.5-8b-text-Q8_0-GGUF apertus-v1.5-8b-text-quant.gguf
 lfm2.5     230m       LiquidAI/LFM2.5-230M-GGUF                  LFM2.5-230M-QUANT.gguf
+minicpm5   1b         openbmb/MiniCPM5-1B-GGUF                   MiniCPM5-1B-QUANT.gguf
 EOF
 }
 
@@ -53,6 +58,7 @@ alias_family() {
     gemma4 | gemma | e4b) echo "gemma4" ;;
     apertus | ap) echo "apertus" ;;
     lfm2.5 | lfm2 | lfm) echo "lfm2.5" ;;
+    minicpm5 | minicpm | cpm | cpm5 | mini) echo "minicpm5" ;;
     *) return 1 ;;
   esac
 }
@@ -67,7 +73,7 @@ resolve_row() {
   catalog | awk -v f="$1" -v p="$2" '$1 == f && $2 == p { print $3 "|" $4; found = 1 } END { exit found ? 0 : 1 }'
 }
 
-usage() { sed -n '2,17p' "$0"; }
+usage() { sed -n '2,21p' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -80,9 +86,15 @@ while [ $# -gt 0 ]; do
     --models-dir) MODELS_DIR="${2:-}"; shift 2 ;;
     --list) catalog; exit 0 ;;
     -h | --help) usage; exit 0 ;;
-    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    *) POSITIONAL+=("$1"); shift ;;
   esac
 done
+
+if [ "${#POSITIONAL[@]}" -gt 1 ]; then
+  echo "at most one model file may be given (got: ${POSITIONAL[*]})" >&2
+  usage >&2
+  exit 2
+fi
 
 # Resolve family/params/quant, download if needed, set MODEL_PATH.
 MODEL_PATH=""
@@ -116,10 +128,16 @@ fetch_model() {
   fi
 }
 
-# Pick the elthur dylib once: --dylib wins, otherwise reuse an existing elthur
-# build (so ./build_all's three calls only build it once).
+# Pick the elthur dylib once: --dylib wins, then QUEEN_DYLIB, otherwise reuse an
+# existing elthur build (so ./build_all's three calls only build it once).
 ensure_dylib() {
   if [ -n "$DYLIB" ]; then
+    [ -f "$DYLIB" ] || {
+      echo "dylib not found: $DYLIB" >&2
+      exit 1
+    }
+  elif [ -n "${QUEEN_DYLIB:-}" ]; then
+    DYLIB="$QUEEN_DYLIB"
     [ -f "$DYLIB" ] || {
       echo "dylib not found: $DYLIB" >&2
       exit 1
@@ -134,10 +152,111 @@ ensure_dylib() {
   export QUEEN_DYLIB="$DYLIB"
 }
 
+# Append a GGUF (plus an ELTHBLOB trailer) to a compiled executable.
+# The engine (elthur core/hosts.zig) finds the model by reading the fixed
+# 80-byte trailer at the end of the running executable and mmapping the bytes
+# recorded there. Appending is idempotent: if a valid trailer already exists the
+# file is truncated back to its original size first, so re-running the build
+# never stacks models.
+#
+# Trailer layout (little-endian C struct "<8sIIQQQQ32s", 80 bytes):
+#   0  magic "ELTHBLOB"
+#   8  u32 version (1)
+#   12 u32 flags (0)
+#   16 u64 model_offset
+#   24 u64 model_length
+#   32 u64 mapped_length (align_up(model_length, ALIGN))
+#   40 u64 executable size before the model
+#   48 32-byte digest (all zero = skip verification)
+#
+# The model is aligned to ALIGN (arm64 page size) so it stays mmap-able.
+append_model() {
+  local MODEL="$1" EXE="$2"
+  local MAGIC="ELTHBLOB" VERSION=1 ALIGN=16384 TRAILER=80
+  local size before offset magic version candidate pad model_offset model_length mapped_length final tmp
+
+  size_of() {
+    stat -f%z "$1" 2>/dev/null || wc -c < "$1"
+  }
+  align_up() {
+    echo $(( ($1 + $2 - 1) / $2 * $2 ))
+  }
+  le32() {
+    local v=$1 i oct out=""
+    for i in 0 1 2 3; do
+      oct="$(printf '%03o' $(( v & 255 )))"
+      out="$out\\$oct"
+      v=$(( v >> 8 ))
+    done
+    printf '%b' "$out"
+  }
+  le64() {
+    local v=$1 i oct out=""
+    for i in 0 1 2 3 4 5 6 7; do
+      oct="$(printf '%03o' $(( v & 255 )))"
+      out="$out\\$oct"
+      v=$(( v >> 8 ))
+    done
+    printf '%b' "$out"
+  }
+
+  # --- idempotency: recover the pre-model size from an existing trailer ------
+  size="$(size_of "$EXE")"
+  before=""
+  if [ "$size" -ge "$TRAILER" ]; then
+    offset=$(( size - TRAILER ))
+    magic="$(tail -c "$TRAILER" "$EXE" | head -c 8)"
+    if [ "$magic" = "$MAGIC" ]; then
+      version="$(od -An -tu4 -j $(( offset + 8 )) -N 4 "$EXE" | tr -d ' ')"
+      candidate="$(od -An -tu8 -j $(( offset + 40 )) -N 8 "$EXE" | tr -d ' ')"
+      if [ "$version" = "$VERSION" ] && [ "$candidate" -gt 0 ] && [ "$candidate" -le "$size" ]; then
+        before="$candidate"
+      fi
+    fi
+  fi
+
+  if [ -n "$before" ]; then
+    if command -v truncate >/dev/null 2>&1; then
+      truncate -s "$before" "$EXE"
+    else
+      tmp="$EXE.tmp.$$"
+      head -c "$before" "$EXE" > "$tmp" && mv "$tmp" "$EXE"
+    fi
+    echo "  re-append: truncated $EXE to $before bytes"
+  fi
+
+  # --- append model + trailer -----------------------------------------------
+  size="$(size_of "$EXE")"
+  model_offset="$(align_up "$size" "$ALIGN")"
+  model_length="$(size_of "$MODEL")"
+  mapped_length="$(align_up "$model_length" "$ALIGN")"
+  pad=$(( model_offset - size ))
+
+  {
+    if [ "$pad" -gt 0 ]; then
+      head -c "$pad" /dev/zero
+    fi
+    cat "$MODEL"
+    printf '%s' "$MAGIC"
+    le32 "$VERSION"
+    le32 0
+    le64 "$model_offset"
+    le64 "$model_length"
+    le64 "$mapped_length"
+    le64 "$size"
+    head -c 32 /dev/zero
+  } >> "$EXE"
+
+  final="$(size_of "$EXE")"
+  echo "  appended $MODEL: $model_length bytes at offset $model_offset (exe $final bytes)"
+}
+
 [ -d "$TUI/node_modules" ] || ( cd "$TUI" && bun install )
 
-# Resolve the model: --url downloads a direct GGUF, otherwise family/params/quant.
-if [ -n "$URL" ]; then
+# Resolve the model: a positional file or --url wins, else family/params/quant.
+if [ "${#POSITIONAL[@]}" -eq 1 ]; then
+  MODEL_PATH="${POSITIONAL[0]}"
+elif [ -n "$URL" ]; then
   FILE="$(basename "${URL%%\?*}")"
   echo "==> model: $FILE (from --url)"
   mkdir -p "$MODELS_DIR"
@@ -153,6 +272,8 @@ if [ -n "$URL" ]; then
     fi
     echo "==> saved $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
   fi
+elif [ -z "$FAMILY" ] && [ -n "${QUEEN_MODEL:-}" ]; then
+  MODEL_PATH="$QUEEN_MODEL"
 else
   raw_family="${FAMILY:-falcon-h1}"
   FAMILY="$(alias_family "$raw_family")" || {
@@ -165,6 +286,40 @@ else
   fetch_model "$FAMILY" "$PARAMS" "$QUANT"
 fi
 
+[ -f "$MODEL_PATH" ] || {
+  echo "model not found: $MODEL_PATH" >&2
+  exit 1
+}
+
 ensure_dylib
 export QUEEN_MODEL="$MODEL_PATH"
-exec "$TUI/build.sh" --name "$NAME"
+
+TARGET="bun-darwin-arm64"
+OUT="$TUI/dist/$NAME"
+
+echo "==> typecheck"
+( cd "$TUI" && bun run typecheck )
+
+# Vendor pin: the bee-cli submodule is pinned by git; bake its SHA into the
+# bundle for /status. No network, no generated source file.
+BEE_SHA="$(git -C "$TUI/bee-cli" rev-parse HEAD)"
+echo "==> bee-cli: ${BEE_SHA:0:12}"
+
+echo "==> stage dylib"
+cp "$DYLIB" "$TUI/libelthur.dylib"
+codesign --force -s - "$TUI/libelthur.dylib"
+
+echo "==> bundle"
+mkdir -p "$TUI/dist"
+( cd "$TUI" && bun build --compile src/index.tsx --target "$TARGET" --outfile "$OUT" \
+  --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" )
+
+# Sign the Mach-O before appending: the model lives past the code, so the
+# signature stays valid. Re-signing the enlarged file fails codesign's strict
+# validation and is unnecessary.
+echo "==> sign"
+codesign --force -s - "$OUT"
+
+echo "==> append model"
+append_model "$MODEL_PATH" "$OUT"
+echo "built $OUT ($(du -h "$OUT" | cut -f1))"

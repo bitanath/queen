@@ -1,12 +1,10 @@
 import "./preload";
 import { render } from "./app";
-import { chatGenerate, streamChatWithTools } from "./queen-ffi";
 import { createQueenAgent } from "./strands-model";
+import { chatGenerate, streamChatWithTools } from "./queen-ffi";
 import { TOOLS_JSON, runTool, stripToolMarkup } from "./tools";
 
-// QUEEN_AGENT_SMOKE="<prompt>": one full Strands agent turn (memory + tools)
-// without a terminal. QUEEN_AGENT_SMOKE=1 uses a weather prompt to exercise the
-// tool loop end to end.
+//TODO unify into single smoke test + actual render
 if (process.env.QUEEN_AGENT_SMOKE) {
   const raw = process.env.QUEEN_AGENT_SMOKE;
   const prompt = raw === "1" ? "What is the weather in Tokyo?" : raw;
@@ -21,7 +19,7 @@ if (process.env.QUEEN_AGENT_SMOKE) {
       console.error("QUEEN_AGENT_SMOKE_ERROR:", e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     }
-  })();
+  })(); // HACK QUEEN_AGENT_SMOKE="<prompt>": full Strands agent (memory + tools) with no terminal. QUEEN_AGENT_SMOKE=1 weather prompt checks tool loop.
 } else if (process.env.QUEEN_SMOKE) {
   const prompt = process.env.QUEEN_SMOKE === "1" ? "Say hello in one short sentence." : process.env.QUEEN_SMOKE;
   try {
@@ -31,8 +29,6 @@ if (process.env.QUEEN_AGENT_SMOKE) {
     process.exitCode = 1;
   }
 } else if (process.env.QUEEN_TOOL_SMOKE) {
-  // QUEEN_TOOL_SMOKE="<prompt>": one tool-enabled generation, then run the
-  // returned call. Same idea as QUEEN_SMOKE, for the tool path.
   const prompt = process.env.QUEEN_TOOL_SMOKE;
   void (async () => {
     try {
@@ -47,7 +43,7 @@ if (process.env.QUEEN_AGENT_SMOKE) {
       console.error("QUEEN_TOOL_SMOKE_ERROR:", e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     }
-  })();
+  })(); // HACK QUEEN_TOOL_SMOKE="<prompt>": one tool-enabled gen, then run the returned call. Same idea as QUEEN_SMOKE, for the tool path.
 } else {
-  render();
+  render(); //NOTE this is the true TUI
 }

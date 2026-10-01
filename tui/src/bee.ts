@@ -31,9 +31,8 @@ import {
   formatRecordMarkdown,
   resolveTimeZone,
 } from "@/utils/markdown";
-// Baked at build time from the pinned bee-cli submodule
-// (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
-const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev";
+
+const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev"; //NOTE Pinned bee-cli submodule (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
 
 export class NotLoggedIn extends Error {
   constructor() {
@@ -49,8 +48,6 @@ export function isNotLoggedIn(err: unknown): boolean {
   );
 }
 
-// ---- context ------------------------------------------------------------
-
 let cached: { env: Environment; ctx: CommandContext } | null = null;
 
 export async function beeContext(env: Environment = "prod"): Promise<CommandContext> {
@@ -63,8 +60,6 @@ export async function beeContext(env: Environment = "prod"): Promise<CommandCont
 export function dropBeeContext(): void {
   cached = null;
 }
-
-// ---- status (mirrors sources/commands/status) ----------------------------
 
 export type StatusInfo = {
   apiLabel: string;
@@ -156,8 +151,6 @@ function parseProfile(payload: unknown): Record<string, unknown> {
   };
 }
 
-// ---- search (bee_search MCP action, keyword default) ---------------------
-
 export async function searchBee(
   query: string,
   limit = 5,
@@ -174,10 +167,6 @@ function toolDataMd(title: string, data: unknown): string {
   const tz = typeof record["timezone"] === "string" ? record["timezone"] : null;
   return formatRecordMarkdown({ title, record, timeZone: resolveTimeZone(tz), nowMs: Date.now() });
 }
-
-// ---- today ---------------------------------------------------------------
-// Brief = `today` CLI default (/v1/todayBrief). Context = bee_get_today
-// aggregation (daily summary, todos, notes, conversations).
 
 export async function getTodayBrief(env: Environment = "prod"): Promise<string> {
   const ctx = await beeContext(env);
@@ -203,8 +192,6 @@ export async function getTodayContext(env: Environment = "prod"): Promise<string
   return toolDataMd("Today", data);
 }
 
-// ---- login ---------------------------------------------------------------
-
 export async function loginWithToken(token: string, env: Environment = "prod"): Promise<string> {
   const clean = token.trim();
   if (!clean) throw new Error("Missing token.");
@@ -226,8 +213,6 @@ function defaultAppId(env: Environment): string {
   return env === "staging" ? "pk5z3uuzjpxj4f7frk6rsq2f" : "ph9fssu1kv1b0hns69fxf7rx";
 }
 
-/// Start (or resume) app pairing. Returns the link for the user to approve.
-/// Does NOT poll — call pollPairing() after.
 export async function startPairing(
   env: Environment = "prod",
   withQr = false,
@@ -271,13 +256,11 @@ export async function startPairing(
     expiresAt: initial.expiresAt,
     resumed: false,
     qr: withQr ? await renderQrCode(pairingUrl) : null,
-  };
+  }; // NOTE Does NOT poll — call pollPairing() after.
 }
 
 export type PairingOutcome = { name: string };
 
-/// Poll until the user approves (2s interval, until expiry or cancel).
-/// On success saves the token and returns the verified name.
 export async function pollPairing(
   env: Environment = "prod",
   isCancelled: () => boolean = () => false,
@@ -309,16 +292,12 @@ export async function pollPairing(
   throw new Error("Login timed out. Please try again.");
 }
 
-// ---- logout (mirrors sources/commands/logout) ----------------------------
-
 export async function logout(env: Environment = "prod"): Promise<void> {
   await clearProxyConfig(env);
   await clearToken(env);
   await clearPairingState(env);
   dropBeeContext();
 }
-
-// ---- auth probe for the header dot ---------------------------------------
 
 export async function isLoggedIn(env: Environment = "prod"): Promise<boolean> {
   try {

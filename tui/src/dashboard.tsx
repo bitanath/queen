@@ -1,28 +1,21 @@
-// Bento dashboard: queen's entry screen. Fixed stacks (header, 3 chart panels,
-// alert + banner, chat + table) with explicit heights so nothing reflows when
-// chat messages stream — only the chat pane's internal scrollbox moves.
 import { useTerminalDimensions } from "@opentui/react";
 import type { ReactNode } from "react";
+import { useTheme } from "./theme/use-theme";
 import { Alert } from "./components/alert";
-import { Banner } from "./components/banner";
 import { Badge } from "./components/badge";
-import { BarChart } from "./components/bar-chart";
 import { Card } from "./components/card";
-import { Divider } from "./components/divider";
+
+import { Chat } from "./chat";
 import { Gauge } from "./components/gauge";
+import { Banner } from "./components/banner";
+import { Divider } from "./components/divider";
+import { BarChart } from "./components/bar-chart";
 import { KeyValue } from "./components/key-value";
 import { Sparkline } from "./components/sparkline";
 import { Table, type Column } from "./components/table";
-import { useTheme } from "./theme/use-theme";
 import { naturalWidths, parseMarkdownTable } from "./libraries/table-format";
-import { Chat } from "./chat";
-import {
-  REQUEST_BARS,
-  SATURATION,
-  TABLE_MD,
-  TABLE_STATS,
-  THROUGHPUT,
-} from "./dummy";
+
+import { REQUEST_BARS, SATURATION, TABLE_MD, TABLE_STATS, THROUGHPUT, } from "./dummy";
 
 type Row = Record<string, unknown>;
 
@@ -38,24 +31,10 @@ const tableData: Row[] = (parsed?.rows ?? []).map((row) =>
   ),
 );
 
-// Width the table wants at its natural spacing: sum(cols) + 3n + 1 borders.
-const tableNaturalW = parsed
-  ? naturalWidths(parsed.headers, parsed.rows).reduce((a, b) => a + b, 0) +
-    3 * parsed.headers.length +
-    1
-  : 40;
+// TODO Width the table wants at its natural spacing: sum(cols) + 3n + 1 borders.
+const tableNaturalW = parsed ? naturalWidths(parsed.headers, parsed.rows).reduce((a, b) => a + b, 0) + 3 * parsed.headers.length + 1 : 40;
 
-const ChartPanel = ({
-  title,
-  width,
-  height,
-  children,
-}: {
-  title: string;
-  width?: number;
-  height: number;
-  children: ReactNode;
-}) => {
+const ChartPanel = ({ title, width, height, children}: { title: string; width?: number; height: number; children: ReactNode;}) => {
   const theme = useTheme();
   return (
     <box
@@ -79,8 +58,6 @@ export function Dashboard() {
   const { width, height } = useTerminalDimensions();
   const theme = useTheme();
 
-  // Height budget: keep the chart stack bounded so the bottom row absorbs the
-  // rest. Nothing here depends on chat content, so the layout is stable.
   const chartH = Math.min(10, Math.max(6, Math.floor(height * 0.24)));
   const innerW = Math.max(40, width - 2);
   const chartColW = Math.floor((innerW - 2) / 3);
@@ -92,21 +69,14 @@ export function Dashboard() {
     Math.min(tableNaturalW + 4, Math.max(34, width - 34)),
   );
   const tableInnerW = tableW - 4;
-
-  // Rows the table body can show before the card overlaps: stack 3 height minus
-  // the card chrome (border + title block), the table chrome (top/header/
-  // separator/bottom) and the stats block (divider + two key/value rows). When
-  // the data is truncated the "+N more" row costs one more row.
+  
   const stack2H = 7; // alert (4) + margin (1) + banner (2)
   const stack3H = Math.max(6, height - (1 + chartH + stack2H + 3));
   const cardChrome = 4; // border (2) + title block (2)
   const tableChrome = 4;
   const statsH = stack3H - cardChrome - tableChrome >= 3 ? 3 : 0;
   const rowsFit = Math.max(1, stack3H - cardChrome - statsH - tableChrome);
-  const tableMaxRows =
-    tableData.length > rowsFit
-      ? Math.max(1, rowsFit - 1)
-      : tableData.length;
+  const tableMaxRows = tableData.length > rowsFit ? Math.max(1, rowsFit - 1) : tableData.length;
 
   return (
     <box

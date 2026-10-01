@@ -23,8 +23,8 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
+    "types": ["bun"],
     
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./bee-cli/sources/*"]
     }

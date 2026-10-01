@@ -22,13 +22,12 @@ export const WEATHER_TOOL = {
 
 export const TOOLS_JSON = JSON.stringify([WEATHER_TOOL]);
 
-// Removes tool-call markup from streamed text so the bubble never shows the raw
-// protocol. An unterminated span (still streaming) is dropped until it closes.
+
 export function stripToolMarkup(text: string): string {
   const spans: [string, string][] = [
     ["<tool_call>", "</tool_call>"],
     ["<|tool_call_start|>", "<|tool_call_end|>"],
-  ];
+  ]; // FIXME Removes tool-call markup from streamed text to never show, unterminated span, (still streaming) is dropped until it closes.
   let out = text;
   for (const [open, close] of spans) {
     let result = "";
@@ -74,12 +73,10 @@ function pad2(n: number): string {
   return n.toString().padStart(2, "0");
 }
 
-// wttr.in hourly slots are HHMM with a plain hour: "0" -> 00:00, "300" -> 03:00,
-// "1500" -> 15:00.
 function slotMinutes(time: string): number | null {
   const v = parseInt(time, 10);
   if (!Number.isFinite(v)) return null;
-  return Math.floor(v / 100) * 60 + (v % 100);
+  return Math.floor(v / 100) * 60 + (v % 100); // wttr.in hourly slots are HHMM with a plain hour: "0" -> 00:00, "300" -> 03:00, "1500" -> 15:00.
 }
 
 function hhmm(time: string): string {
@@ -135,8 +132,7 @@ export async function runTool(call: ToolCall): Promise<string> {
   throw new Error(`unknown tool: ${call.name}`);
 }
 
-// Strands tool surface. Same schema as WEATHER_TOOL, wrapped as a FunctionTool
-// so the agent loop can execute it and feed the result back to the model.
+
 export const weatherTool = new FunctionTool({
   name: "get_weather",
   description: "Get the current weather and the next few hours for a city",
@@ -145,5 +141,5 @@ export const weatherTool = new FunctionTool({
     const city = String((input as { city?: unknown } | null)?.city ?? "").trim();
     if (!city) throw new Error("get_weather: missing city");
     return getWeather(city);
-  },
+  } // TODO Strands tool example. Wrapped as a FunctionTool so agent loop can execute it and feed result back to the model.
 });

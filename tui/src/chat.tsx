@@ -1,22 +1,9 @@
-// Queen chat pane: the original single-screen chat (scrollback + input + status)
-// extracted into a component so the dashboard bento can embed it. All Bee/GGUF
-// behaviour is unchanged.
 import { SyntaxStyle, TextAttributes, type InputRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useMemo, useRef, useState } from "react";
-import {
-  getMe,
-  getStatus,
-  getTodayBrief,
-  getTodayContext,
-  isNotLoggedIn,
-  loginWithToken,
-  logout,
-  pollPairing,
-  renderStatusMd,
-  searchBee,
-  startPairing,
-} from "./bee";
+
+import {loginWithToken, logout, pollPairing, renderStatusMd, searchBee, startPairing} from "./bee";
+import { getMe, getStatus, getTodayBrief, getTodayContext, isNotLoggedIn} from "./bee";
 import { EngineCancelled, CHAT_SYSTEM, streamFallback } from "./queen-ffi";
 import { createQueenAgent, ElthurModel } from "./strands-model";
 import { Spinner } from "./components/spinner";
@@ -47,8 +34,7 @@ export function Chat() {
     { id: 0, role: "system", text: "Welcome to queen. Type /help for commands, /login to connect Bee." },
   ]);
   const [value, setValue] = useState("");
-  // The <input> `value` prop is initial-only; the live buffer is cleared
-  // imperatively via the renderable (remount-by-key does NOT reset it).
+  // NOTE The <input> `value` prop is initial-only; the live buffer is cleared imperatively via the renderable (remount-by-key does NOT reset it).
   const inputRef = useRef<InputRenderable | null>(null);
   const [busy, setBusy] = useState(false);
   const [streamingId, setStreamingId] = useState<number | null>(null);
@@ -56,8 +42,7 @@ export function Chat() {
   const idRef = useRef(1);
   const cancelRef = useRef(false);
 
-  // One Strands agent per chat pane: it owns conversation memory and the tool
-  // loop. The model instance is kept alongside so we can read truncation state.
+  // MARK: - One Strands agent per chat pane: owns conversation memory and tool loop. Model instance is kept alongside so we can read truncation state.
   const modelRef = useRef<ElthurModel | null>(null);
   const agentRef = useRef<ReturnType<typeof createQueenAgent> | null>(null);
   if (agentRef.current === null) {
@@ -71,7 +56,7 @@ export function Chat() {
     setMsgs((m) => [...m, { id, role, text }]);
   };
 
-  // Streaming queen reply: placeholder first, then live text updates.
+  // FIXME Streaming queen reply: placeholder first, then live text updates.
   const pushStreaming = () => {
     const id = idRef.current++;
     setMsgs((m) => [...m, { id, role: "queen", text: "" }]);
@@ -97,9 +82,7 @@ export function Chat() {
     }
   });
 
-  // Stream one turn through the Strands agent. The agent owns memory; we render
-  // its events: live text deltas, tool-call progress, and tool results. Tool
-  // results become their own segments so the model's follow-up answer joins them.
+
   const streamAgent = async (text: string) => {
     const agent = agentRef.current;
     const model = modelRef.current;
@@ -110,6 +93,7 @@ export function Chat() {
     let status = "";
     const render = () => updateMsg(id, [...segments, status, live].filter((s) => s.trim().length > 0).join("\n\n"));
     try {
+      // MARK: - One turn agentic loop let's goo
       for await (const event of agent.stream(text)) {
         if (event.type === "modelStreamUpdateEvent") {
           const e = event.event;

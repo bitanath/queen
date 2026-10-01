@@ -1,5 +1,3 @@
-// Dummy datasets for the dashboard bento. The table is authored as markdown so
-// its alignment markers exercise the ported table-formatter logic.
 export const REQUEST_BARS = [
   { label: "mon", value: 32 },
   { label: "tue", value: 48 },

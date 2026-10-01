@@ -8,13 +8,11 @@ everything — the dylib is embedded and the model is appended after the code.
 
 ```
 queen/
-  build               build one variant (pick a model, download it, build)
-  build_all           build queen-small / queen-medium / queen-high in one go
-  build_append        append a GGUF + ELTHBLOB trailer to a built executable
+  build               build one variant: pick/download model, compile, append, sign
+  build_all           build queen-low / queen-high in one go
   models/             downloaded GGUFs (gitignored)
   tui/                OpenTUI + Bun app
     bee-cli/          submodule: upstream Bee API (sources imported by tui)
-    build.sh          stage dylib -> bun compile -> append model -> sign
     src/
     libelthur.dylib   staged thin dylib (gitignored)
     dist/queen        the built executable (gitignored)
@@ -25,34 +23,33 @@ queen/
 Requires Bun >= 1.3.0 and a sibling `elthur` checkout.
 
 ```bash
-./build_all                                 # queen-small, queen-medium, queen-high
+./build_all                                 # queen-low, queen-high
 ./build --list
 ./build -m qwen3.5 -p 2b -q q8_0            # one-off, emits dist/queen
 ./build -m falcon-h1 --dylib /path/to/libelthur.dylib
 ```
 
-`./build_all` builds all three artifacts in one go (it just calls `./build`
-three times, once per model):
+`./build_all` builds both artifacts in one go (it just calls `./build` twice,
+once per model):
 
 | artifact | model | notes |
 |---|---|---|
-| `dist/queen-small` | LFM2.5-230M Q8_0   | no reasoning |
-| `dist/queen-medium` | Qwen3.5-0.8B Q6_K | reasoning    |
-| `dist/queen-high` | Qwen3.5-4B Q5_K_M   | reasoning    |
+| `dist/queen-low`  | MiniCPM5-1B Q4_K_M | |
+| `dist/queen-high` | Qwen3.5-4B Q5_K_M  | reasoning |
 
 Passing `-m` builds a single model as `dist/queen`; add `--name <n>` to emit
 `dist/<n>`. Families: `falcon-h1`, `qwen3.5`, `falcon-h1r`, `gemma4`, `apertus`,
-`lfm2.5`. `--params` defaults to the lowest option listed for the family;
+`lfm2.5`, `minicpm5`. `--params` defaults to the lowest option listed for the family;
 `--quant` defaults to `q8_0`. The GGUF is downloaded to `models/` (resumable;
-skipped if present), then `tui/build.sh` embeds the elthur dylib and runs the
-root `build_append` to append the GGUF + an `ELTHBLOB` trailer (elthur is built
-once and then reused). elthur maps the appended model at runtime
-(`elthur/core/hosts.zig`), so there is no 2 GiB embed ceiling.
+skipped if present), then `build` embeds the elthur dylib, compiles the TUI, and
+appends the GGUF + an `ELTHBLOB` trailer (elthur is built once and then reused).
+elthur maps the appended model at runtime (`elthur/core/hosts.zig`), so there is
+no 2 GiB embed ceiling.
 
 ## Run
 
 ```bash
-./tui/dist/queen-small     # or queen-medium / queen-high / queen
+./tui/dist/queen-low       # or queen-high / queen
 ```
 
 Chat commands: `/search <q>`, `/today [--context]`, `/me`, `/status`,
