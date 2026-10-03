@@ -36,12 +36,14 @@ export function ThemeModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal title="theme" width={56} height={Math.min(themes.length + 8, 20)} onClose={revertAndClose}>
+    <Modal title="theme" width={56} height={Math.max(themes.length * 2 + 12, 20)} onClose={revertAndClose}>
       <text fg={theme.colors.mutedForeground}>Arrows preview · enter saves · esc cancels</text>
       <box flexGrow={1} minHeight={0} marginTop={1}>
         <select
           focused
+          flexGrow={1}
           options={options}
+          height={themes.length * 2}
           selectedIndex={selectedIndex}
           showDescription
           showSelectionIndicator

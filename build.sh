@@ -20,6 +20,7 @@
 #   QUEEN_REBUILD_DYLIB  force an elthur rebuild instead of reusing a built dylib
 #   QUEEN_NO_ELTHUR_UPDATE  skip `git submodule update --remote elthur`
 #   QUEEN_SIGN_IDENTITY     codesign identity (default: first Developer ID found)
+#   QUEEN_NO_WARM      skip the post-build warm run (see below)
 #   HF_TOKEN          bearer token, for gated/rate-limited downloads
 set -euo pipefail
 
@@ -319,10 +320,14 @@ mkdir -p "$TUI/dist"
   --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" \
   --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\"" )
 
-# One file, validly signed: append the model, then grow __LINKEDIT to cover it
-# (so the signature hashes the model too), then sign. Signing before appending
-# is what forced the old, invalid signature; this order fixes it. elthur finds
-# the trailer just before the code signature on macOS.
+# One file, validly signed. The code signature blob has to live inside the
+# __LINKEDIT segment, so we append the model + trailer and grow __LINKEDIT to
+# reach EOF, then sign with the signature landing in that segment; patchify also
+# relocates __LINKEDIT's vmaddr when the grown range would land in the dyld
+# shared cache (otherwise launch fails). This is a correctness fix, not a speed
+# one: the signature necessarily covers the model, so macOS pays its one-off
+# whole-file validation on first exec (the warm run below pays it at build time).
+# elthur finds the trailer just before the code signature on macOS.
 echo "==> de-sign"
 codesign --remove-signature "$OUT" 2>/dev/null || true
 
@@ -344,4 +349,13 @@ else
   echo "  no Developer ID Application identity found; ad-hoc signing"
   codesign --force -s - "$OUT"
 fi
+
+# First exec of a freshly signed file pays a one-off, size-proportional macOS
+# verification. Do it here so the user's first launch is fast. Skip with
+# QUEEN_NO_WARM=1.
+if [ -z "${QUEEN_NO_WARM:-}" ]; then
+  echo "==> warm (prime signature validation)"
+  QUEEN_WARM=1 "$OUT" >/dev/null 2>&1 || true
+fi
+
 echo "built $OUT ($(du -h "$OUT" | cut -f1))"

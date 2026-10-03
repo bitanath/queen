@@ -4,6 +4,15 @@
 A beautiful agentic way to garner insights from your Bee Wearable or Bee App.
 Based on and pulls the latest ``bee-cli``.
 
+First launch is slow
+--------------------
+
+The model is embedded in the executable, so macOS verifies the entire signed
+file the first time it runs: roughly 6 seconds for ``queen-low`` and 25 seconds
+for ``queen-high``. Every launch after that is well under a second. A rebuild, a
+fresh download, or a reboot pays the one-time cost again. ``./build.sh`` warms
+the artifact it just built, so it is already fast when you run it.
+
 Build
 -----
 

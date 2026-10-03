@@ -1,7 +1,7 @@
 // termcn OpenCode theme — queen's palette.
 import type { Theme } from "./types";
 
-export const opencodeTheme: Theme = {
+export const classicTheme: Theme = {
   border: {
     color: "#808080",
     focusColor: "#9d7cd8",

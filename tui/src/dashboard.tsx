@@ -101,7 +101,6 @@ export function Dashboard() {
         <text fg={theme.colors.mutedForeground}>{`${width}×${height} · prod`}</text>
       </box>
 
-      {/* stack 1 — three chart panels */}
       <box flexDirection="row" gap={1} height={chartH} flexShrink={0}>
         <ChartPanel title="requests" height={chartH}>
           <BarChart data={REQUEST_BARS} width={chartContentW} />
@@ -114,7 +113,6 @@ export function Dashboard() {
         </ChartPanel>
       </box>
 
-      {/* stack 2 — alert, banner below it */}
       <box flexDirection="column" flexShrink={0}>
         <Alert variant="warning" title="context window">
           12,480 / 32k tokens (39%) — older turns will be trimmed.
@@ -126,7 +124,6 @@ export function Dashboard() {
         </box>
       </box>
 
-      {/* stack 3 — chat + data table */}
       <box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
         <box flexGrow={1} minHeight={0} overflow="hidden">
           <Chat />

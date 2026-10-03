@@ -15,8 +15,9 @@ const COMMANDS: [string, string][] = [
 ];
 
 const KEYS: [string, string][] = [
-  ["ctrl+opt+t", "theme switcher"],
-  ["ctrl+opt+h", "this help"],
+  ["ctrl+t", "theme switcher"],
+  ["ctrl+p", "this help"],
+  ["mouse drag", "select text · auto-copies"],
   ["enter", "send message"],
   ["esc", "clear input / cancel / close"],
   ["ctrl+c", "quit"],
@@ -65,7 +66,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         ))}
 
         <box marginTop={1}>
-          <text fg={theme.colors.mutedForeground}>Press esc or ctrl+opt+h to close.</text>
+          <text fg={theme.colors.mutedForeground}>Press esc or ctrl+p to close.</text>
         </box>
       </scrollbox>
     </Modal>

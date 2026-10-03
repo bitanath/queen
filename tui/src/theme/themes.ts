@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { defaultTheme } from "./theme-default";
-import { opencodeTheme } from "./theme-opencode";
+import { classicTheme } from "./theme-classic";
 import { gruvboxTheme } from "./theme-gruvbox";
 import { nordTheme } from "./theme-nord";
 import { catppuccinTheme } from "./theme-catppuccin";
@@ -14,7 +14,7 @@ import { tokyoNightTheme } from "./theme-tokyo-night";
 import type { Theme } from "./types";
 
 export const themes: Theme[] = [
-  opencodeTheme,
+  classicTheme,
   defaultTheme,
   gruvboxTheme,
   nordTheme,
@@ -22,13 +22,13 @@ export const themes: Theme[] = [
   tokyoNightTheme,
 ];
 
-export const DEFAULT_THEME_NAME = opencodeTheme.name;
+export const DEFAULT_THEME_NAME = classicTheme.name;
 
 const CONFIG_DIR = join(homedir(), ".bee");
 const THEME_FILE = join(CONFIG_DIR, "queen-theme.json");
 
 export function themeByName(name: string | null | undefined): Theme {
-  return themes.find((theme) => theme.name === name) ?? opencodeTheme;
+  return themes.find((theme) => theme.name === name) ?? classicTheme;
 }
 
 export function loadSavedThemeName(): string {

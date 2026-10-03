@@ -3,6 +3,7 @@ import { createRoot } from "@opentui/react";
 import { ThemeProvider } from "./theme/provider";
 import { loadInitialTheme } from "./theme/themes";
 import { AppShell } from "./userinterface";
+import { Toaster } from "./components/toaster";
 import { createCliRenderer } from "@opentui/core";
 
 export function render() {
@@ -10,9 +11,11 @@ export function render() {
     const renderer = await createCliRenderer();
     createRoot(renderer).render(
       <ThemeProvider theme={loadInitialTheme()}>
-        <AppShell>
-          <Dashboard />
-        </AppShell>
+        <Toaster>
+          <AppShell>
+            <Dashboard />
+          </AppShell>
+        </Toaster>
       </ThemeProvider>,
     );
   };

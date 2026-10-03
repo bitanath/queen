@@ -307,7 +307,7 @@ export function Chat() {
         />
       </box>
       <text attributes={TextAttributes.DIM}>
-        {`enter send · esc clear · /help · ctrl+opt+t theme · ctrl+opt+h help · ctrl+c quit${lastMs !== null ? ` · last ${(lastMs / 1000).toFixed(1)}s` : ""}`}
+        {`enter send · esc clear · /help · ctrl+t theme · ctrl+p help · ctrl+c quit${lastMs !== null ? ` · last ${(lastMs / 1000).toFixed(1)}s` : ""}`}
       </text>
     </box>
   );
