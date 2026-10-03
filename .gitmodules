@@ -1,4 +1,8 @@
 [submodule "tui/bee-cli"]
-	path = tui/bee-cli
+	path = bee-cli
 	url = https://github.com/bee-computer/bee-cli.git
+	branch = main
+[submodule "elthur"]
+	path = elthur
+	url = https://github.com/bitanath/elthur.git
 	branch = main
