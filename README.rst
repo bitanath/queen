@@ -24,12 +24,13 @@ submodules first:
 ``./build_all.sh`` builds both artifacts in one go (it just calls
 ``./build.sh`` twice, once per model):
 
-::
-
-   | artifact          | model              | notes     |
-   |-------------------|--------------------|-----------|
-   | `dist/queen-low`  | MiniCPM5-1B Q4_K_M |           |
-   | `dist/queen-high` | Qwen3.5-4B Q5_K_M  | reasoning |
++---------------------+--------------------+-----------+
+| artifact            | model              | notes     |
++=====================+====================+===========+
+| ``dist/queen-low``  | MiniCPM5-1B Q4_K_M |           |
++---------------------+--------------------+-----------+
+| ``dist/queen-high`` | Qwen3.5-4B Q5_K_M  | reasoning |
++---------------------+--------------------+-----------+
 
 Dependencies
 ------------
