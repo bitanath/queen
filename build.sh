@@ -177,11 +177,10 @@ ensure_dylib() {
 }
 
 # Append a GGUF (plus an ELTHBLOB trailer) to a compiled executable.
-# The engine (elthur core/hosts.zig) finds the model by reading the fixed
-# 80-byte trailer at the end of the running executable and mmapping the bytes
-# recorded there. Appending is idempotent: if a valid trailer already exists the
-# file is truncated back to its original size first, so re-running the build
-# never stacks models.
+# The engine (elthur core/hosts.zig) finds the model via this 80-byte trailer
+# and mmaps the bytes recorded there. On macOS the code signature is appended
+# after the trailer (build de-signs, appends, then signs), so the trailer sits
+# just before LC_CODE_SIGNATURE; elsewhere it is the last 80 bytes of the file.
 #
 # Trailer layout (little-endian C struct "<8sIIQQQQ32s", 80 bytes):
 #   0  magic "ELTHBLOB"
@@ -190,14 +189,14 @@ ensure_dylib() {
 #   16 u64 model_offset
 #   24 u64 model_length
 #   32 u64 mapped_length (align_up(model_length, ALIGN))
-#   40 u64 executable size before the model
+#   40 u64 reserved (pre-model size; elthur ignores it)
 #   48 32-byte digest (all zero = skip verification)
 #
 # The model is aligned to ALIGN (arm64 page size) so it stays mmap-able.
 append_model() {
   local MODEL="$1" EXE="$2"
-  local MAGIC="ELTHBLOB" VERSION=1 ALIGN=16384 TRAILER=80
-  local size before offset magic version candidate pad model_offset model_length mapped_length final tmp
+  local MAGIC="ELTHBLOB" VERSION=1 ALIGN=16384
+  local size pad model_offset model_length mapped_length final
 
   size_of() {
     stat -f%z "$1" 2>/dev/null || wc -c < "$1"
@@ -223,31 +222,6 @@ append_model() {
     done
     printf '%b' "$out"
   }
-
-  # --- idempotency: recover the pre-model size from an existing trailer ------
-  size="$(size_of "$EXE")"
-  before=""
-  if [ "$size" -ge "$TRAILER" ]; then
-    offset=$(( size - TRAILER ))
-    magic="$(tail -c "$TRAILER" "$EXE" | head -c 8)"
-    if [ "$magic" = "$MAGIC" ]; then
-      version="$(od -An -tu4 -j $(( offset + 8 )) -N 4 "$EXE" | tr -d ' ')"
-      candidate="$(od -An -tu8 -j $(( offset + 40 )) -N 8 "$EXE" | tr -d ' ')"
-      if [ "$version" = "$VERSION" ] && [ "$candidate" -gt 0 ] && [ "$candidate" -le "$size" ]; then
-        before="$candidate"
-      fi
-    fi
-  fi
-
-  if [ -n "$before" ]; then
-    if command -v truncate >/dev/null 2>&1; then
-      truncate -s "$before" "$EXE"
-    else
-      tmp="$EXE.tmp.$$"
-      head -c "$before" "$EXE" > "$tmp" && mv "$tmp" "$EXE"
-    fi
-    echo "  re-append: truncated $EXE to $before bytes"
-  fi
 
   # --- append model + trailer -----------------------------------------------
   size="$(size_of "$EXE")"

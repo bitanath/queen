@@ -74,11 +74,9 @@ function encodeString(s: string): Uint8Array {
 }
 
 let model: Pointer | null = null;
-let modelSystem: string | null = null;
 
 function ensureModel(system: string = CHAT_SYSTEM): Pointer {
   if (model === null) {
-    modelSystem = system;
     const systemZ = encodeString(system);
     model = symbols.model_create_ex(systemZ, 512, 0.3, 0.9, 40);
     void systemZ;
@@ -87,10 +85,6 @@ function ensureModel(system: string = CHAT_SYSTEM): Pointer {
   return model;
 }
 
-
-export function engineModelSystem(): string | null {
-  return modelSystem;
-}
 
 export type EngineMessage = { role: string; content: string };
 
@@ -192,14 +186,6 @@ export async function streamGenerate( prompt: string, system: string, maxTokens:
   }
 }
 
-export function streamChat(
-  prompt: string,
-  onChunk: (textSoFar: string) => void,
-  isCancelled?: () => boolean,
-): Promise<StreamResult> {
-  return streamGenerate(prompt, CHAT_SYSTEM, CHAT_MAX_TOKENS, onChunk, isCancelled);
-}
-
 export type ToolStreamResult = StreamResult & { toolCalls: ToolCall[] };
 
 function readToolCalls(handle: Pointer): ToolCall[] {
@@ -280,17 +266,4 @@ export async function streamFallback( attempted: string, detail: string, onChunk
   }
 }
 
-export function friendlyLoggedOut(attempted: string, detail: string): string {
-  const userMsg =
-    `The user ran ${attempted} while logged out of Bee. ${detail} ` +
-    "Write a short friendly message for them in plain sentences.";
-  try {
-    return generate(userMsg, CHAT_SYSTEM, 128);
-  } catch {
-    return (
-      "You're logged out of Bee, so I can't pull live data right now. " +
-      "Run /login in this chat to connect your account, and I'll fetch it live. " +
-      "Meanwhile, ask me anything and I'll help from general knowledge."
-    );
-  }
-}
+

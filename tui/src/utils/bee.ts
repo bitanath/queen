@@ -305,12 +305,4 @@ export async function logout(env: Environment = "prod"): Promise<void> {
   dropBeeContext();
 }
 
-export async function isLoggedIn(env: Environment = "prod"): Promise<boolean> {
-  try {
-    const ctx = await beeContext(env);
-    if (ctx.client.isProxy) return true;
-    return (await loadToken(env)) !== null;
-  } catch {
-    return false;
-  }
-}
+
