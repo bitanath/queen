@@ -8,12 +8,15 @@ everything — the dylib is embedded and the model is appended after the code.
 
 ```
 queen/
-  build               build one variant: pick/download model, compile, append, sign
-  build_all           build queen-low / queen-high in one go
+  build.sh            build one variant: pick/download model, compile, append, sign
+  build_all.sh        build queen-low / queen-high in one go
+  entitlements.plist  hardened-runtime entitlements for Developer-ID signing
   models/             downloaded GGUFs (gitignored)
   bee-cli/            submodule: upstream Bee API (sources imported by tui)
   elthur/             submodule: elthur sources + committed thin dylib (outputs/lib)
   tui/                OpenTUI + Bun app
+    index.tsx         entry: smoke suite or TUI
+    patchification.ts Mach-O patcher used by build.sh
     src/
     libelthur.dylib   staged from elthur submodule (gitignored)
     dist/queen        the built executable (gitignored)
@@ -21,22 +24,23 @@ queen/
 
 ## Build
 
-Requires Bun >= 1.3.0. The elthur dylib is taken straight from the pinned
-`elthur/` submodule (`elthur/outputs/lib/libelthur.dylib`), so no separate
-checkout or Zig build is needed. On a fresh clone, initialize submodules first:
+Requires Bun >= 1.3.0. The elthur dylib comes from the `elthur/` submodule
+(`elthur/outputs/lib/libelthur.dylib`); the build keeps it on latest `main`
+(disable with `QUEEN_NO_ELTHUR_UPDATE=1`). On a fresh clone, initialize
+submodules first:
 
 ```bash
 git submodule update --init --recursive
 ```
 
 ```bash
-./build_all                                 # queen-low, queen-high
-./build --list
-./build -m qwen3.5 -p 2b -q q8_0            # one-off, emits dist/queen
-./build -m falcon-h1 --dylib /path/to/libelthur.dylib
+./build_all.sh                              # queen-low, queen-high
+./build.sh --list
+./build.sh -m qwen3.5 -p 2b -q q8_0         # one-off, emits dist/queen
+./build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
 ```
 
-`./build_all` builds both artifacts in one go (it just calls `./build` twice,
+`./build_all.sh` builds both artifacts in one go (it just calls `./build.sh` twice,
 once per model):
 
 | artifact | model | notes |
@@ -48,33 +52,27 @@ Passing `-m` builds a single model as `dist/queen`; add `--name <n>` to emit
 `dist/<n>`. Families: `falcon-h1`, `qwen3.5`, `falcon-h1r`, `gemma4`, `apertus`,
 `lfm2.5`, `minicpm5`. `--params` defaults to the lowest option listed for the family;
 `--quant` defaults to `q8_0`. The GGUF is downloaded to `models/` (resumable;
-skipped if present), then `build` embeds the elthur dylib, compiles the TUI, and
-appends the GGUF + an `ELTHBLOB` trailer. The dylib is the prebuilt thin one
-committed in the `elthur/` submodule; set `QUEEN_REBUILD_DYLIB=1` to rebuild it
-from the submodule sources instead. elthur maps the appended model at runtime
-(`elthur/core/hosts.zig`), so there is no 2 GiB embed ceiling.
+skipped if present), then `build` embeds the elthur dylib, compiles the TUI,
+appends the GGUF + an `ELTHBLOB` trailer, and Developer-ID signs the result. The
+dylib is the prebuilt thin one committed in the `elthur/` submodule; set
+`QUEEN_REBUILD_DYLIB=1` to rebuild it from the submodule sources instead.
 
-## Submodule pins
+## Signing
 
-`bee-cli` and `elthur` are pinned submodules: the parent commit records the exact
-upstream revision, so builds and dev runs never touch the network and the elthur
-dylib always matches its sources. To move to a newer upstream, bump the pin
-explicitly and review the breakage it causes:
+The model lives *inside* the executable and the signature covers it. After
+appending, `patchification.ts` grows `__LINKEDIT` to EOF — and relocates its `vmaddr`
+off the dyld shared cache for large models — so codesign hashes the model too;
+then `build` signs with a `Developer ID Application` identity if one is in the
+keychain (override with `QUEEN_SIGN_IDENTITY`), else falls back to ad-hoc. On
+macOS elthur finds the trailer at `LC_CODE_SIGNATURE.dataoff - 80`. This is not
+notarization: distribute via `curl` (no quarantine → no Gatekeeper prompt).
 
-```bash
-# Bee API (upstream)
-git -C bee-cli fetch origin main
-git -C bee-cli checkout origin/main          # review the diff
-bun run --cwd tui typecheck                  # upstream API breakage surfaces in src/bee.ts
-git add bee-cli && git commit                # commit the new gitlink
+## Dependencies
 
-# elthur (dylib + sources ship together)
-git -C elthur fetch origin main
-git -C elthur checkout origin/main           # review the diff + new outputs/lib dylib
-git add elthur && git commit                 # commit the new gitlink
-```
-
-The pinned bee-cli SHA is baked into the binary at build time and shown by `/status`.
+`bee-cli` is pinned by the parent commit. `elthur` is kept on latest `main` by
+the build (`git submodule update --remote`); to freeze a release, build with
+`QUEEN_NO_ELTHUR_UPDATE=1` and commit the resulting gitlink. Both revisions are
+baked into the binary at build time and shown by `/status`.
 
 ## Run
 
@@ -111,15 +109,22 @@ in CI without a terminal.
 ## Credentials
 
 Tokens are stored as dotfiles under `~/.bee/` (`token-<env>`, mode 0600)
-rather than the macOS Keychain. The binary is ad-hoc signed, so its signature
-changes on every build and the Keychain would prompt for your login password on
-each launch. Set `BEE_FORCE_FILE_STORE=0` to use the Keychain instead.
+rather than the macOS Keychain. The binary is re-signed on every build, so the
+Keychain would prompt for your login password on each launch. Set
+`BEE_FORCE_FILE_STORE=0` to use the Keychain instead.
 
 ## Dev (no append step)
+
+Unchanged: the dev run loads the staged `tui/libelthur.dylib` and the GGUF via
+`ELTHUR_MODEL`.
 
 ```bash
 cd tui
 bun install
 ELTHUR_MODEL=$PWD/../models/<file>.gguf bun run index.tsx
 ```
+
+After editing elthur, run `./build.sh` once (or copy
+`elthur/outputs/lib/libelthur.dylib` to `tui/libelthur.dylib`) to restage the
+dylib before `bun run dev`.
 

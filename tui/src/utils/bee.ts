@@ -33,6 +33,7 @@ import {
 } from "@/utils/markdown";
 
 const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev"; //NOTE Pinned bee-cli submodule (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
+const ELTHUR_SHA = process.env.QUEEN_ELTHUR_SHA ?? "dev"; //NOTE elthur revision this build used (usually latest main); "dev" when run unbundled.
 
 export class NotLoggedIn extends Error {
   constructor() {
@@ -70,6 +71,7 @@ export type StatusInfo = {
   verifiedId: number | null;
   viaProxy: string | null;
   beeCliSha: string;
+  elthurSha: string;
 };
 
 export async function getStatus(env: Environment = "prod"): Promise<StatusInfo> {
@@ -88,6 +90,7 @@ export async function getStatus(env: Environment = "prod"): Promise<StatusInfo> 
       verifiedId: user.id,
       viaProxy: proxyAddress,
       beeCliSha: BEE_CLI_SHA,
+      elthurSha: ELTHUR_SHA,
     };
   }
 
@@ -104,11 +107,16 @@ export async function getStatus(env: Environment = "prod"): Promise<StatusInfo> 
     verifiedId: user.id,
     viaProxy: null,
     beeCliSha: BEE_CLI_SHA,
+    elthurSha: ELTHUR_SHA,
   };
 }
 
 export function renderStatusMd(s: StatusInfo): string {
-  const lines = [`API: ${s.apiLabel} (${s.apiUrl})`, `bee-cli: ${s.beeCliSha.slice(0, 12)}`];
+  const lines = [
+    `API: ${s.apiLabel} (${s.apiUrl})`,
+    `bee-cli: ${s.beeCliSha.slice(0, 12)}`,
+    `elthur: ${s.elthurSha.slice(0, 12)}`,
+  ];
   if (s.viaProxy) lines.push(`Connected via proxy: ${s.viaProxy}`);
   if (s.tokenMask) lines.push(`Token: ${s.tokenMask}`);
   if (s.verifiedName) lines.push(`Verified as ${s.verifiedName} (id ${s.verifiedId}).`);

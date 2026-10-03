@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Queen: build one self-contained executable from an elthur dylib + a GGUF.
 #
-#   ./build --list
-#   ./build -m qwen3.5 -p 0.8b -q q6_k --name queen-medium
-#   ./build -m falcon-h1 --dylib /path/to/libelthur.dylib
-#   ./build [model.gguf] [--name queen-small]
+#   ./build.sh --list
+#   ./build.sh -m qwen3.5 -p 0.8b -q q6_k --name queen-medium
+#   ./build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
+#   ./build.sh [model.gguf] [--name queen-small]
 #
-# For all three queen-* variants in one go use ./build_all.
+# For all three queen-* variants in one go use ./build_all.sh.
 #
 # Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5, minicpm5
 # Single-model defaults: --model falcon-h1, --params <lowest listed>, --quant q8_0.
@@ -18,6 +18,8 @@
 #   QUEEN_DYLIB       prebuilt dylib to stage (overridden by --dylib)
 #   QUEEN_MODEL       model file to use when no model/url/--model is given
 #   QUEEN_REBUILD_DYLIB  force an elthur rebuild instead of reusing a built dylib
+#   QUEEN_NO_ELTHUR_UPDATE  skip `git submodule update --remote elthur`
+#   QUEEN_SIGN_IDENTITY     codesign identity (default: first Developer ID found)
 #   HF_TOKEN          bearer token, for gated/rate-limited downloads
 set -euo pipefail
 
@@ -74,7 +76,7 @@ resolve_row() {
   catalog | awk -v f="$1" -v p="$2" '$1 == f && $2 == p { print $3 "|" $4; found = 1 } END { exit found ? 0 : 1 }'
 }
 
-usage() { sed -n '2,21p' "$0"; }
+usage() { sed -n '2,23p' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -147,12 +149,20 @@ ensure_dylib() {
       exit 1
     }
   else
-    DYLIB="$ELTHUR/outputs/lib/libelthur.dylib"
-    # The elthur submodule may not be initialized yet; fetch it once.
-    if [ ! -f "$DYLIB" ] && [ -d "$ROOT/.git" ]; then
-      echo "==> elthur submodule not initialized; running git submodule update"
-      git -C "$ROOT" submodule update --init elthur || true
+    # Default to the elthur submodule and keep it on latest main. Disable with
+    # QUEEN_NO_ELTHUR_UPDATE=1 (offline / reproducible); skipped entirely when an
+    # explicit ELTHUR_DIR checkout is in use.
+    if [ -d "$ROOT/.git" ] && [ -z "${ELTHUR_DIR:-}" ]; then
+      if [ -n "${QUEEN_NO_ELTHUR_UPDATE:-}" ]; then
+        [ -f "$ELTHUR/outputs/lib/libelthur.dylib" ] ||
+          git -C "$ROOT" submodule update --init elthur || true
+      else
+        echo "==> elthur: submodule update --remote"
+        git -C "$ROOT" submodule update --init --remote elthur ||
+          echo "  (elthur update failed; using current checkout)"
+      fi
     fi
+    DYLIB="$ELTHUR/outputs/lib/libelthur.dylib"
     if [ -n "${QUEEN_REBUILD_DYLIB:-}" ] || [ ! -f "$DYLIB" ]; then
       echo "==> elthur: scripts/build.sh"
       ( cd "$ELTHUR" && ./scripts/build.sh )
@@ -317,10 +327,13 @@ OUT="$TUI/dist/$NAME"
 echo "==> typecheck"
 ( cd "$TUI" && bun run typecheck )
 
-# Vendor pin: the bee-cli submodule is pinned by git; bake its SHA into the
-# bundle for /status. No network, no generated source file.
+# Vendor pins: bake the sha of each dependency into the bundle for /status. No
+# network, no generated source file. elthur is usually latest main (see
+# ensure_dylib above), so this records exactly which revision a build used.
 BEE_SHA="$(git -C "$BEE_CLI" rev-parse HEAD)"
 echo "==> bee-cli: ${BEE_SHA:0:12}"
+ELTHUR_SHA="$(git -C "$ELTHUR" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "==> elthur: ${ELTHUR_SHA:0:12}"
 
 echo "==> stage dylib"
 cp "$DYLIB" "$TUI/libelthur.dylib"
@@ -329,14 +342,32 @@ codesign --force -s - "$TUI/libelthur.dylib"
 echo "==> bundle"
 mkdir -p "$TUI/dist"
 ( cd "$TUI" && bun build --compile index.tsx --target "$TARGET" --outfile "$OUT" \
-  --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" )
+  --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" \
+  --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\"" )
 
-# Sign the Mach-O before appending: the model lives past the code, so the
-# signature stays valid. Re-signing the enlarged file fails codesign's strict
-# validation and is unnecessary.
-echo "==> sign"
-codesign --force -s - "$OUT"
+# One file, validly signed: append the model, then grow __LINKEDIT to cover it
+# (so the signature hashes the model too), then sign. Signing before appending
+# is what forced the old, invalid signature; this order fixes it. elthur finds
+# the trailer just before the code signature on macOS.
+echo "==> de-sign"
+codesign --remove-signature "$OUT" 2>/dev/null || true
 
 echo "==> append model"
 append_model "$MODEL_PATH" "$OUT"
+
+echo "==> patch __LINKEDIT"
+bun "$TUI/patchification.ts" "$OUT"
+
+echo "==> sign"
+IDENTITY="${QUEEN_SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+fi
+if [ -n "$IDENTITY" ]; then
+  echo "  identity: $IDENTITY"
+  codesign --force --options runtime --entitlements "$ROOT/entitlements.plist" --sign "$IDENTITY" "$OUT"
+else
+  echo "  no Developer ID Application identity found; ad-hoc signing"
+  codesign --force -s - "$OUT"
+fi
 echo "built $OUT ($(du -h "$OUT" | cut -f1))"

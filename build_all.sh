@@ -4,14 +4,14 @@
 #   queen-low    minicpm5 / 1b   / q4_k_m
 #   queen-high   qwen3.5  / 4b   / q5_k_m
 #
-# Thin wrapper: every artifact is built by ./build, so the elthur dylib is
+# Thin wrapper: every artifact is built by ./build.sh, so the elthur dylib is
 # built/reused once (by the first call) and the model is downloaded if missing.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-"$DIR/build" -m minicpm5 -p 1b -q q4_k_m --name queen-low
-"$DIR/build" -m qwen3.5  -p 4b -q q5_k_m --name queen-high
+"$DIR/build.sh" -m minicpm5 -p 1b -q q4_k_m --name queen-low
+"$DIR/build.sh" -m qwen3.5  -p 4b -q q5_k_m --name queen-high
 
 echo ""
 echo "built:"
