@@ -2,33 +2,20 @@ import { SyntaxStyle, TextAttributes, type InputRenderable } from "@opentui/core
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useMemo, useRef, useState } from "react";
 
-import {loginWithToken, logout, pollPairing, renderStatusMd, searchBee, startPairing} from "./bee";
-import { getMe, getStatus, getTodayBrief, getTodayContext, isNotLoggedIn} from "./bee";
-import { EngineCancelled, CHAT_SYSTEM, streamFallback } from "./queen-ffi";
-import { createQueenAgent, ElthurModel } from "./strands-model";
+import {loginWithToken, logout, pollPairing, renderStatusMd, searchBee, startPairing} from "./utils/bee";
+import { getMe, getStatus, getTodayBrief, getTodayContext, isNotLoggedIn} from "./utils/bee";
+import { EngineCancelled, CHAT_SYSTEM, streamFallback } from "./utils/queen-ffi";
+import { createQueenAgent, ElthurModel } from "./utils/strands-model";
 import { Spinner } from "./components/spinner";
-import { stripToolMarkup } from "./tools";
+import { stripToolMarkup } from "./utils/tool-definitions";
+import { useUi } from "./userinterface";
 
 type Role = "user" | "queen" | "error" | "system";
 type Msg = { id: number; role: Role; text: string };
 
-const HELP = [
-  "Commands:",
-  "  /search <query> [--limit N]  search Bee conversations (keyword)",
-  "  /today [--context]            today's brief (or full wearable context)",
-  "  /me                           your Bee profile",
-  "  /status                       auth + connection status",
-  "  /login [--qr]                 pair with the Bee app (link + optional QR)",
-  "  /login --token <token>        log in with a token directly",
-  "  /logout                       clear stored credentials",
-  "  /help                         this list",
-  "  /quit                         exit",
-  "",
-  "Plain text just chats with the local model.",
-].join("\n");
-
 export function Chat() {
   const renderer = useRenderer();
+  const ui = useUi();
   const style = useMemo(() => SyntaxStyle.create(), []);
   const [msgs, setMsgs] = useState<Msg[]>([
     { id: 0, role: "system", text: "Welcome to queen. Type /help for commands, /login to connect Bee." },
@@ -75,6 +62,7 @@ export function Chat() {
 
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") quit();
+    if (ui.modalOpen) return; // a modal owns esc and friends while it is open
     if (key.name === "escape") {
       cancelRef.current = true;
       agentRef.current?.cancel();
@@ -177,7 +165,10 @@ export function Chat() {
     const arg = rest.join(" ");
     switch (cmd) {
       case "help":
-        push("system", HELP);
+        ui.openModal("help");
+        return;
+      case "theme":
+        ui.openModal("theme");
         return;
       case "quit":
         quit();
@@ -306,7 +297,7 @@ export function Chat() {
         <text attributes={TextAttributes.BOLD}>❯ </text>
         <input
           ref={inputRef}
-          focused={!busy}
+          focused={!busy && !ui.modalOpen}
           value={value}
           onInput={setValue}
           onSubmit={(v) => {
@@ -316,7 +307,7 @@ export function Chat() {
         />
       </box>
       <text attributes={TextAttributes.DIM}>
-        {`enter send · esc clear · /help · ctrl+c quit${lastMs !== null ? ` · last ${(lastMs / 1000).toFixed(1)}s` : ""}`}
+        {`enter send · esc clear · /help · ctrl+opt+t theme · ctrl+opt+h help · ctrl+c quit${lastMs !== null ? ` · last ${(lastMs / 1000).toFixed(1)}s` : ""}`}
       </text>
     </box>
   );

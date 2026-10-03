@@ -1,0 +1,30 @@
+import { createTheme } from "./provider";
+
+export const catppuccinTheme = createTheme({
+  name: "catppuccin",
+  border: { style: "rounded", color: "#585b70", focusColor: "#cba6f7" },
+  colors: {
+    primary: "#cba6f7",
+    primaryForeground: "#1e1e2e",
+    secondary: "#313244",
+    secondaryForeground: "#cdd6f4",
+    accent: "#89b4fa",
+    accentForeground: "#1e1e2e",
+    success: "#a6e3a1",
+    successForeground: "#1e1e2e",
+    warning: "#f9e2af",
+    warningForeground: "#1e1e2e",
+    error: "#f38ba8",
+    errorForeground: "#1e1e2e",
+    info: "#89dceb",
+    infoForeground: "#1e1e2e",
+    background: "#1e1e2e",
+    foreground: "#cdd6f4",
+    muted: "#313244",
+    mutedForeground: "#a6adc8",
+    border: "#585b70",
+    focusRing: "#cba6f7",
+    selection: "#f5c2e7",
+    selectionForeground: "#1e1e2e",
+  },
+});

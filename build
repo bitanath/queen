@@ -23,8 +23,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 TUI="$ROOT/tui"
+BEE_CLI="$ROOT/bee-cli"
 MODELS_DIR="${QUEEN_MODELS_DIR:-$ROOT/models}"
-ELTHUR="${ELTHUR_DIR:-$ROOT/../elthur}"
+ELTHUR="${ELTHUR_DIR:-$ROOT/elthur}"
 
 FAMILY=""
 PARAMS=""
@@ -128,8 +129,11 @@ fetch_model() {
   fi
 }
 
-# Pick the elthur dylib once: --dylib wins, then QUEEN_DYLIB, otherwise reuse an
-# existing elthur build (so ./build_all's three calls only build it once).
+# Pick the elthur dylib once: --dylib wins, then QUEEN_DYLIB, otherwise take the
+# dylib committed in the elthur submodule (outputs/lib). Because that dylib is
+# committed alongside the source it was built from and the submodule pins the
+# exact revision, a plain checkout always yields a matching dylib -- no Zig
+# build needed. Set QUEEN_REBUILD_DYLIB to force scripts/build.sh instead.
 ensure_dylib() {
   if [ -n "$DYLIB" ]; then
     [ -f "$DYLIB" ] || {
@@ -142,12 +146,22 @@ ensure_dylib() {
       echo "dylib not found: $DYLIB" >&2
       exit 1
     }
-  elif [ -n "${QUEEN_REBUILD_DYLIB:-}" ] || [ ! -f "$ELTHUR/outputs/lib/libelthur.dylib" ]; then
-    echo "==> elthur: scripts/build.sh"
-    ( cd "$ELTHUR" && ./scripts/build.sh )
-    DYLIB="$ELTHUR/outputs/lib/libelthur.dylib"
   else
     DYLIB="$ELTHUR/outputs/lib/libelthur.dylib"
+    # The elthur submodule may not be initialized yet; fetch it once.
+    if [ ! -f "$DYLIB" ] && [ -d "$ROOT/.git" ]; then
+      echo "==> elthur submodule not initialized; running git submodule update"
+      git -C "$ROOT" submodule update --init elthur || true
+    fi
+    if [ -n "${QUEEN_REBUILD_DYLIB:-}" ] || [ ! -f "$DYLIB" ]; then
+      echo "==> elthur: scripts/build.sh"
+      ( cd "$ELTHUR" && ./scripts/build.sh )
+    fi
+    [ -f "$DYLIB" ] || {
+      echo "dylib not found: $DYLIB" >&2
+      echo "run: git -C \"$ROOT\" submodule update --init elthur" >&2
+      exit 1
+    }
   fi
   export QUEEN_DYLIB="$DYLIB"
 }
@@ -252,6 +266,9 @@ append_model() {
 }
 
 [ -d "$TUI/node_modules" ] || ( cd "$TUI" && bun install )
+# bee-cli is a root-level submodule now, so its sources resolve their own deps
+# (date-fns, handlebars, qrcode, tweetnacl) from bee-cli/node_modules.
+[ -d "$BEE_CLI/node_modules" ] || ( cd "$BEE_CLI" && bun install )
 
 # Resolve the model: a positional file or --url wins, else family/params/quant.
 if [ "${#POSITIONAL[@]}" -eq 1 ]; then
@@ -302,7 +319,7 @@ echo "==> typecheck"
 
 # Vendor pin: the bee-cli submodule is pinned by git; bake its SHA into the
 # bundle for /status. No network, no generated source file.
-BEE_SHA="$(git -C "$TUI/bee-cli" rev-parse HEAD)"
+BEE_SHA="$(git -C "$BEE_CLI" rev-parse HEAD)"
 echo "==> bee-cli: ${BEE_SHA:0:12}"
 
 echo "==> stage dylib"
@@ -311,7 +328,7 @@ codesign --force -s - "$TUI/libelthur.dylib"
 
 echo "==> bundle"
 mkdir -p "$TUI/dist"
-( cd "$TUI" && bun build --compile src/index.tsx --target "$TARGET" --outfile "$OUT" \
+( cd "$TUI" && bun build --compile index.tsx --target "$TARGET" --outfile "$OUT" \
   --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" )
 
 # Sign the Mach-O before appending: the model lives past the code, so the

@@ -1,0 +1,30 @@
+import { createTheme } from "./provider";
+
+export const tokyoNightTheme = createTheme({
+  name: "tokyo-night",
+  border: { style: "rounded", color: "#3b4261", focusColor: "#7aa2f7" },
+  colors: {
+    primary: "#7aa2f7",
+    primaryForeground: "#1a1b26",
+    secondary: "#24283b",
+    secondaryForeground: "#c0caf5",
+    accent: "#bb9af7",
+    accentForeground: "#1a1b26",
+    success: "#9ece6a",
+    successForeground: "#1a1b26",
+    warning: "#e0af68",
+    warningForeground: "#1a1b26",
+    error: "#f7768e",
+    errorForeground: "#1a1b26",
+    info: "#7dcfff",
+    infoForeground: "#1a1b26",
+    background: "#1a1b26",
+    foreground: "#c0caf5",
+    muted: "#292e42",
+    mutedForeground: "#565f89",
+    border: "#3b4261",
+    focusRing: "#7aa2f7",
+    selection: "#bb9af7",
+    selectionForeground: "#1a1b26",
+  },
+});

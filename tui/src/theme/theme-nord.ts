@@ -1,0 +1,30 @@
+import { createTheme } from "./provider";
+
+export const nordTheme = createTheme({
+  name: "nord",
+  border: { style: "rounded", color: "#4c566a", focusColor: "#88c0d0" },
+  colors: {
+    primary: "#88c0d0",
+    primaryForeground: "#2e3440",
+    secondary: "#3b4252",
+    secondaryForeground: "#e5e9f0",
+    accent: "#81a1c1",
+    accentForeground: "#2e3440",
+    success: "#a3be8c",
+    successForeground: "#2e3440",
+    warning: "#ebcb8b",
+    warningForeground: "#2e3440",
+    error: "#bf616a",
+    errorForeground: "#2e3440",
+    info: "#5e81ac",
+    infoForeground: "#eceff4",
+    background: "#2e3440",
+    foreground: "#d8dee9",
+    muted: "#3b4252",
+    mutedForeground: "#7b88a1",
+    border: "#4c566a",
+    focusRing: "#88c0d0",
+    selection: "#b48ead",
+    selectionForeground: "#2e3440",
+  },
+});

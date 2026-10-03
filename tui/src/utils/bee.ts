@@ -120,8 +120,6 @@ function maskToken(token: string): string {
   return t.length <= 8 ? "********" : `${t.slice(0, 4)}...${t.slice(-4)}`;
 }
 
-// ---- me (mirrors sources/commands/me, markdown shape) --------------------
-
 export async function getMe(env: Environment = "prod"): Promise<string> {
   const ctx = await beeContext(env);
   const data = await requestClientJson(ctx, "/v1/me", { method: "GET" });

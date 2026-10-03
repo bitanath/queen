@@ -20,7 +20,7 @@ import {
   toolCallsOf,
   type EngineMessage,
 } from "./queen-ffi";
-import { stripToolMarkup, weatherTool } from "./tools";
+import { stripToolMarkup, weatherTool } from "./tool-definitions";
 
 
 const CONTEXT_WINDOW = 4096;

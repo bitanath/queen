@@ -7,6 +7,9 @@ dist/
 out/
 *.tgz
 
+# staged thin dylib (copied from the elthur submodule at build time)
+tui/libelthur.dylib
+
 # downloaded models
 models/
 *.gguf

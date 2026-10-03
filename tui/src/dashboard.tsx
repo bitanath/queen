@@ -15,7 +15,7 @@ import { Sparkline } from "./components/sparkline";
 import { Table, type Column } from "./components/table";
 import { naturalWidths, parseMarkdownTable } from "./libraries/table-format";
 
-import { REQUEST_BARS, SATURATION, TABLE_MD, TABLE_STATS, THROUGHPUT, } from "./dummy";
+import { REQUEST_BARS, SATURATION, TABLE_MD, TABLE_STATS, THROUGHPUT, } from "./utils/dummy";
 
 type Row = Record<string, unknown>;
 

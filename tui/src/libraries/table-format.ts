@@ -1,9 +1,3 @@
-// Table formatting logic ported from nvuillam/markdown-table-formatter
-// (via its engine markdown-table-prettify): column width = max(header, cells),
-// alignment from `:---:` markers. We keep the pure string math and drop the
-// vscode/file-CLI wrapper, then add `fitWidths` so a rendered grid always fills
-// its pane exactly.
-
 export type Align = "left" | "right" | "center";
 
 export interface ParsedTable {
@@ -12,6 +6,7 @@ export interface ParsedTable {
   rows: string[][];
 }
 
+//MARK:- Table formatting logic ported from nvuillam/markdown-table-formatter
 const DELIM_CELL = /^:?-{1,}:?$/;
 
 const splitRow = (line: string): string[] => {

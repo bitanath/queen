@@ -1,6 +1,6 @@
 import { CString, dlopen, ptr, type Pointer } from "bun:ffi";
-import libPath from "../libelthur.dylib" with {type: "file"};
-import type { ToolCall } from "./tools";
+import libPath from "../../libelthur.dylib" with {type: "file"};
+import type { ToolCall } from "./tool-definitions";
 
 const { symbols } = dlopen(libPath, {
   // void* model_create_ex(const char* system, int32_t max_tokens,

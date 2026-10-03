@@ -26,8 +26,8 @@
     "types": ["bun"],
     
     "paths": {
-      "@/*": ["./bee-cli/sources/*"]
+      "@/*": ["../bee-cli/sources/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "index.tsx"]
 }

@@ -1,0 +1,30 @@
+import { createTheme } from "./provider";
+
+export const gruvboxTheme = createTheme({
+  name: "gruvbox",
+  border: { style: "rounded", color: "#665c54", focusColor: "#fabd2f" },
+  colors: {
+    primary: "#fabd2f",
+    primaryForeground: "#282828",
+    secondary: "#3c3836",
+    secondaryForeground: "#ebdbb2",
+    accent: "#b8bb26",
+    accentForeground: "#282828",
+    success: "#b8bb26",
+    successForeground: "#282828",
+    warning: "#fabd2f",
+    warningForeground: "#282828",
+    error: "#fb4934",
+    errorForeground: "#282828",
+    info: "#83a598",
+    infoForeground: "#282828",
+    background: "#282828",
+    foreground: "#ebdbb2",
+    muted: "#3c3836",
+    mutedForeground: "#a89984",
+    border: "#665c54",
+    focusRing: "#fabd2f",
+    selection: "#d3869b",
+    selectionForeground: "#282828",
+  },
+});
