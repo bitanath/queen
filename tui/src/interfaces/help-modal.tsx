@@ -1,8 +1,8 @@
 // Help overlay: commands, keybindings, and a short about section.
-import { Modal } from "./modal";
+import { Modal } from "../components/modal";
 import { useTheme } from "../theme/use-theme";
 
-const COMMANDS: [string, string][] = [
+export const COMMANDS: [string, string][] = [
   ["/status", "auth + connection status"],
   ["/me", "your Bee profile"],
   ["/today [--context]", "today's brief (or full wearable context)"],
@@ -10,13 +10,14 @@ const COMMANDS: [string, string][] = [
   ["/login [--qr | --token <t>]", "connect the Bee app"],
   ["/logout", "clear stored credentials"],
   ["/theme", "open the theme switcher"],
-  ["/help", "this help"],
+  ["/commands", "this help dialog"],
   ["/quit", "exit"],
 ];
 
 const KEYS: [string, string][] = [
   ["ctrl+t", "theme switcher"],
   ["ctrl+p", "this help"],
+  ["ctrl+k", "all commands"],
   ["mouse drag", "select text · auto-copies"],
   ["enter", "send message"],
   ["esc", "clear input / cancel / close"],

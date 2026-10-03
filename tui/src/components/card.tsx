@@ -57,7 +57,7 @@ export const Card = ({
           {subtitle && <text fg={theme.colors.mutedForeground}>{subtitle}</text>}
         </box>
       )}
-      <box flexDirection="column" overflow="hidden">{children}</box>
+      <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">{children}</box>
       {footer && (
         <box flexDirection="column" marginTop={1} paddingTop={1}>
           <text fg={resolvedBorderColor}>{footerDividerChar.repeat(30)}</text>

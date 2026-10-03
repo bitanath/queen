@@ -318,7 +318,8 @@ echo "==> bundle"
 mkdir -p "$TUI/dist"
 ( cd "$TUI" && bun build --compile index.tsx --target "$TARGET" --outfile "$OUT" \
   --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" \
-  --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\"" )
+  --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\"" \
+  --define "process.env.QUEEN_MODEL_FAMILY=\"$FAMILY\"" )
 
 # One file, validly signed. The code signature blob has to live inside the
 # __LINKEDIT segment, so we append the model + trailer and grow __LINKEDIT to

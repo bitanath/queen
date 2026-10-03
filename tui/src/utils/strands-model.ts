@@ -12,7 +12,6 @@ import {
   type ToolSpec,
 } from "@strands-agents/sdk";
 import {
-  CHAT_SYSTEM,
   beginStream,
   freeStream,
   pollStream,
@@ -20,6 +19,7 @@ import {
   toolCallsOf,
   type EngineMessage,
 } from "./queen-ffi";
+import { CHAT_SYSTEM } from "./model-params";
 import { stripToolMarkup, weatherTool } from "./tool-definitions";
 
 
@@ -136,8 +136,6 @@ export class ElthurModel extends Model<ElthurModelConfig> {
       modelId: "elthur-local",
       contextWindowLimit: CONTEXT_WINDOW,
       maxTokens: DEFAULT_MAX_TOKENS,
-      temperature: 0.3,
-      topP: 0.9,
       ...config,
     };
   }

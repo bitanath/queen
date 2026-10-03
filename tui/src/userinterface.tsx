@@ -2,11 +2,13 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react";
 import { createClipboard, createHostClipboard, createRendererClipboardAdapter } from "@opentui/core";
 
-import { HelpModal } from "./components/help-modal";
-import { ThemeModal } from "./components/theme-modal";
-import { useToast } from "./components/toaster";
+import { HelpModal } from "./interfaces/help-modal";
+import { ThemeModal } from "./interfaces/theme-modal";
+import { CommandsModal } from "./interfaces/commands-modal";
+import { StatusBar } from "./interfaces/status-bar";
+import { useToast } from "./interfaces/toaster";
 
-type ModalKind = "theme" | "help";
+type ModalKind = "theme" | "help" | "commands";
 
 type UiContextValue = {
   openModal: (modal: ModalKind) => void;
@@ -27,6 +29,7 @@ export function useUi(): UiContextValue {
 // MARK: - keybindings for help and theme change
 const THEME_KEY = "t";
 const HELP_KEY = "p";
+const COMMANDS_KEY = "k";
 
 function isCombo(key: { ctrl: boolean; name: string }, name: string): boolean {
   return key.ctrl && key.name === name;
@@ -75,6 +78,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     } else if (isCombo(key, HELP_KEY)) {
       key.preventDefault();
       setModal("help");
+    } else if (isCombo(key, COMMANDS_KEY)) {
+      key.preventDefault();
+      setModal("commands");
     }
   });
 
@@ -87,9 +93,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <UiContext.Provider value={value}>
       <box flexDirection="column" width="100%" height="100%" position="relative">
-        {children}
+        <box flexGrow={1} minHeight={0}>
+          {children}
+        </box>
+        <StatusBar />
         {modal === "theme" && <ThemeModal onClose={() => setModal(null)} />}
         {modal === "help" && <HelpModal onClose={() => setModal(null)} />}
+        {modal === "commands" && <CommandsModal onClose={() => setModal(null)} />}
       </box>
     </UiContext.Provider>
   );

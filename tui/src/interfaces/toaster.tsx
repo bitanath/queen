@@ -6,7 +6,7 @@
 // without blocking mouse hit-testing (and therefore drag-select) underneath.
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 
-import { Toast, type ToastVariant } from "./toast";
+import { Toast, type ToastVariant } from "../components/toast";
 
 export interface ToastOptions {
   variant?: ToastVariant;

@@ -1,36 +1,24 @@
 import { CString, dlopen, ptr, type Pointer } from "bun:ffi";
 import libPath from "../../libelthur.dylib" with {type: "file"};
 import type { ToolCall } from "./tool-definitions";
+import { CHAT_SYSTEM, modelParams } from "./model-params";
 
+//NOTE elthur's C API surface we leverage this 
 const { symbols } = dlopen(libPath, {
-  // void* model_create_ex(const char* system, int32_t max_tokens,
-  //     double temperature, double top_p, int32_t top_k)
   model_create_ex: { args: ["cstring", "i32", "f64", "f64", "i32"], returns: "ptr" },
-  // char* model_generate(void* handle, const char* prompt) -> free_string()
   model_generate: { args: ["ptr", "cstring"], returns: "ptr" },
   model_free: { args: ["ptr"], returns: "void" },
-  // void* stream_start_model(void* model, ChatMessageC* msgs, size_t n,
-  //     const char* system, int32_t max_tokens, double temperature,
-  //     double top_p, int32_t top_k)
   stream_start_model: {
     args: ["ptr", "ptr", "usize", "cstring", "i32", "f64", "f64", "i32"],
     returns: "ptr",
   },
-  // Same as stream_start_model, plus an OpenAI-style tools JSON array. Parsed
-  // tool calls are read back with stream_tool_calls once the stream is done.
   stream_start_model_ex: {
     args: ["ptr", "ptr", "usize", "cstring", "cstring", "i32", "f64", "f64", "i32"],
     returns: "ptr",
   },
-  // char* stream_tool_calls(void* handle) -> [{"name":..,"arguments":{..}}]
-  //   or NULL; free with free_string().
   stream_tool_calls: { args: ["ptr"], returns: "ptr" },
-  // isize stream_poll(void* handle, char* out, size_t cap)
-  //     bytes written, 0 idle, -1 done, -2 error
-  stream_poll: { args: ["ptr", "ptr", "usize"], returns: "i64" },
+  stream_poll: { args: ["ptr", "ptr", "usize"], returns: "i64" }, // poll: >0 bytes written, 0 idle, -1 done, -2 error.
   stream_free: { args: ["ptr"], returns: "void" },
-  // bool stream_hit_length_limit(void* handle) — true when generation stopped
-  // because the output-token budget (or context window) ran out, not on EOS.
   stream_hit_length_limit: { args: ["ptr"], returns: "bool" },
   free_string: { args: ["ptr"], returns: "void" },
 });
@@ -56,13 +44,6 @@ export const CHAT_MAX_TOKENS = 1024;
 export const FALLBACK_MAX_TOKENS = 512;
 
 
-export const CHAT_SYSTEM =
-  "You are Queen, a friendly assistant inside a chat app. " +
-  "The user may or may not be logged in to Bee; if they ask for live " +
-  "personal data you don't have, briefly suggest the /search or /today " +
-  "commands. Otherwise just help directly from general knowledge. " +
-  "Write in plain sentences, no code formatting. Keep it under 150 words."; //TODO elthur bakes sysprompt model at load -> ignores per-call `system` arg 
-
 const enc = new TextEncoder();
 
 function encodeString(s: string): Uint8Array {
@@ -77,8 +58,9 @@ let model: Pointer | null = null;
 
 function ensureModel(system: string = CHAT_SYSTEM): Pointer {
   if (model === null) {
+    const p = modelParams();
     const systemZ = encodeString(system);
-    model = symbols.model_create_ex(systemZ, 512, 0.3, 0.9, 40);
+    model = symbols.model_create_ex(systemZ, 512, p.temperature, p.topP, p.topK);
     void systemZ;
     if (model === null) throw new EngineFailed();
   }
@@ -99,9 +81,10 @@ export function beginStream( messages: EngineMessage[], system: string, toolsJso
   }
   const systemZ = encodeString(system);
   const toolsZ = toolsJson !== null ? encodeString(toolsJson) : null;
+  const p = modelParams();
   const handle = toolsZ
-    ? symbols.stream_start_model_ex(m, msgs, messages.length, systemZ, toolsZ, maxTokens, 0.3, 0.9, 40)
-    : symbols.stream_start_model(m, msgs, messages.length, systemZ, maxTokens, 0.3, 0.9, 40);
+    ? symbols.stream_start_model_ex(m, msgs, messages.length, systemZ, toolsZ, maxTokens, p.temperature, p.topP, p.topK)
+    : symbols.stream_start_model(m, msgs, messages.length, systemZ, maxTokens, p.temperature, p.topP, p.topK);
   
   void zipped;
   void msgs;
@@ -212,7 +195,8 @@ export async function streamGenerateWithTools(prompt: string, system: string, ma
   const msgs = new BigUint64Array(2);
   msgs[0] = BigInt(ptr(role));
   msgs[1] = BigInt(ptr(content));
-  const handle = symbols.stream_start_model_ex(m, msgs, 1, systemZ, toolsZ, maxTokens, 0.3, 0.9, 40);
+  const p = modelParams();
+  const handle = symbols.stream_start_model_ex(m, msgs, 1, systemZ, toolsZ, maxTokens, p.temperature, p.topP, p.topK);
   void role;
   void content;
   void systemZ;

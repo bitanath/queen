@@ -2,7 +2,7 @@
 // ~/.bee/queen-theme.json; esc reverts to the theme that was active on open.
 import { useMemo, useState } from "react";
 
-import { Modal } from "./modal";
+import { Modal } from "../components/modal";
 import { useTheme, useThemeUpdater } from "../theme/use-theme";
 import { saveThemeName, themeByName, themes } from "../theme/themes";
 

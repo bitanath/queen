@@ -1,31 +1,73 @@
-import { SyntaxStyle, TextAttributes, type InputRenderable } from "@opentui/core";
+import { SyntaxStyle, TextAttributes } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+
+import { useTheme } from "./theme/use-theme";
 
 import {loginWithToken, logout, pollPairing, renderStatusMd, searchBee, startPairing} from "./utils/bee";
 import { getMe, getStatus, getTodayBrief, getTodayContext, isNotLoggedIn} from "./utils/bee";
-import { EngineCancelled, CHAT_SYSTEM, streamFallback } from "./utils/queen-ffi";
+import { EngineCancelled, streamFallback } from "./utils/queen-ffi";
+import { CHAT_SYSTEM } from "./utils/model-params";
 import { createQueenAgent, ElthurModel } from "./utils/strands-model";
 import { Spinner } from "./components/spinner";
 import { stripToolMarkup } from "./utils/tool-definitions";
 import { useUi } from "./userinterface";
 
 type Role = "user" | "queen" | "error" | "system";
-type Msg = { id: number; role: Role; text: string };
+export type ChatMessage = { id: number; role: Role; text: string };
 
-export function Chat() {
+// Reasoning emitted between the think tags is shown dim + muted; the rest
+// renders as markdown. An unclosed tag (still streaming) stays "thinking".
+// The tag characters are hex-escaped so they survive any editor/transport.
+const THINK = /\x3cthink\x3e([\s\S]*?)(?:\x3c\/think\x3e|$)/g;
+
+function QueenBody({ text, streaming, style }: { text: string; streaming: boolean; style: SyntaxStyle }) {
+  const theme = useTheme();
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  THINK.lastIndex = 0;
+  while ((m = THINK.exec(text))) {
+    const before = text.slice(last, m.index);
+    if (before.trim()) {
+      nodes.push(<markdown key={key++} content={before} syntaxStyle={style} streaming={streaming} />);
+    }
+    const think = (m[1] ?? "").trim();
+    if (think) {
+      nodes.push(
+        <text key={key++} fg={theme.colors.mutedForeground} attributes={TextAttributes.DIM}>
+          {think}
+        </text>,
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  const tail = text.slice(last);
+  if (tail.trim()) {
+    nodes.push(<markdown key={key++} content={tail} syntaxStyle={style} streaming={streaming} />);
+  }
+  return <>{nodes}</>;
+}
+
+export type ChatController = {
+  msgs: ChatMessage[];
+  streamingId: number | null;
+  busy: boolean;
+  send: (line: string) => Promise<void>;
+};
+
+// MARK: - Chat engine. Owns the Strands agent, conversation, streaming and command
+// handling. Kept separate from the view so the input can live elsewhere (the
+// full-width text area below the dashboard columns).
+export function useChat(): ChatController {
   const renderer = useRenderer();
   const ui = useUi();
-  const style = useMemo(() => SyntaxStyle.create(), []);
-  const [msgs, setMsgs] = useState<Msg[]>([
+  const [msgs, setMsgs] = useState<ChatMessage[]>([
     { id: 0, role: "system", text: "Welcome to queen. Type /help for commands, /login to connect Bee." },
   ]);
-  const [value, setValue] = useState("");
-  // NOTE The <input> `value` prop is initial-only; the live buffer is cleared imperatively via the renderable (remount-by-key does NOT reset it).
-  const inputRef = useRef<InputRenderable | null>(null);
   const [busy, setBusy] = useState(false);
   const [streamingId, setStreamingId] = useState<number | null>(null);
-  const [lastMs, setLastMs] = useState<number | null>(null);
   const idRef = useRef(1);
   const cancelRef = useRef(false);
 
@@ -66,10 +108,8 @@ export function Chat() {
     if (key.name === "escape") {
       cancelRef.current = true;
       agentRef.current?.cancel();
-      setValue("");
     }
   });
-
 
   const streamAgent = async (text: string) => {
     const agent = agentRef.current;
@@ -250,37 +290,46 @@ export function Chat() {
   const send = async (line: string) => {
     const text = line.trim();
     if (!text || busy) return;
-    setValue("");
-    if (inputRef.current) inputRef.current.value = "";
     cancelRef.current = false;
     push("user", text);
     setBusy(true);
-    const t0 = Date.now();
     try {
       if (text.startsWith("/")) await runCommand(text);
       else {
         await streamAgent(text);
       }
     } finally {
-      setLastMs(Date.now() - t0);
       setBusy(false);
     }
   };
 
+  return { msgs, streamingId, busy, send };
+}
+
+// MARK: - Presentation: the message log only. The input lives in the dashboard.
+export function Chat({
+  msgs,
+  streamingId,
+  busy,
+}: {
+  msgs: ChatMessage[];
+  streamingId: number | null;
+  busy: boolean;
+}) {
+  const style = useMemo(() => SyntaxStyle.create(), []);
   return (
     <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
       <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
         {msgs.map((m) =>
           m.role === "queen" ? (
             <box key={m.id} flexDirection="column">
-              <text attributes={TextAttributes.DIM}>queen</text>
-              <markdown content={m.text} syntaxStyle={style} streaming={m.id === streamingId} />
+              <QueenBody text={m.text} streaming={m.id === streamingId} style={style} />
             </box>
           ) : m.role === "user" ? (
-            <box key={m.id}>
-              <text attributes={TextAttributes.BOLD}>❯ </text>
-              <text>{m.text}</text>
-            </box>
+            <text key={m.id}>
+              <b>❯ </b>
+              {m.text}
+            </text>
           ) : m.role === "error" ? (
             <text key={m.id} attributes={TextAttributes.BOLD}>
               {m.text}
@@ -293,22 +342,6 @@ export function Chat() {
         )}
         {busy && <Spinner label="thinking" />}
       </scrollbox>
-      <box>
-        <text attributes={TextAttributes.BOLD}>❯ </text>
-        <input
-          ref={inputRef}
-          focused={!busy && !ui.modalOpen}
-          value={value}
-          onInput={setValue}
-          onSubmit={(v) => {
-            if (typeof v === "string") void send(v);
-          }}
-          placeholder={busy ? "working…" : "message or /command"}
-        />
-      </box>
-      <text attributes={TextAttributes.DIM}>
-        {`enter send · esc clear · /help · ctrl+t theme · ctrl+p help · ctrl+c quit${lastMs !== null ? ` · last ${(lastMs / 1000).toFixed(1)}s` : ""}`}
-      </text>
     </box>
   );
 }
