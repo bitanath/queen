@@ -10,8 +10,9 @@ out/
 # staged thin dylib (copied from the elthur submodule at build time)
 tui/libelthur.dylib
 
-# downloaded models
-models/
+# downloaded models (keep the directory, ignore the GGUFs)
+models/*
+!models/.gitkeep
 *.gguf
 
 # python venv (legacy, if one lingers from before the shell append helper)

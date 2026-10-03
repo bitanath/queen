@@ -7,7 +7,6 @@ import { useTheme } from "./theme/use-theme";
 import {loginWithToken, logout, pollPairing, renderStatusMd, searchBee, startPairing} from "./utils/bee";
 import { getMe, getStatus, getTodayBrief, getTodayContext, isNotLoggedIn} from "./utils/bee";
 import { EngineCancelled, streamFallback } from "./utils/queen-ffi";
-import { CHAT_SYSTEM } from "./utils/model-params";
 import { createQueenAgent, ElthurModel } from "./utils/strands-model";
 import { Spinner } from "./components/spinner";
 import { stripToolMarkup } from "./utils/tool-definitions";
@@ -75,7 +74,7 @@ export function useChat(): ChatController {
   const modelRef = useRef<ElthurModel | null>(null);
   const agentRef = useRef<ReturnType<typeof createQueenAgent> | null>(null);
   if (agentRef.current === null) {
-    const model = new ElthurModel({ systemPrompt: CHAT_SYSTEM });
+    const model = new ElthurModel();
     modelRef.current = model;
     agentRef.current = createQueenAgent(model);
   }

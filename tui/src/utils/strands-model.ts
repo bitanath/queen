@@ -19,7 +19,7 @@ import {
   toolCallsOf,
   type EngineMessage,
 } from "./queen-ffi";
-import { CHAT_SYSTEM } from "./model-params";
+import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
 import { stripToolMarkup, weatherTool } from "./tool-definitions";
 
 
@@ -149,7 +149,7 @@ export class ElthurModel extends Model<ElthurModelConfig> {
   }
 
   override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    const system = systemText(options?.systemPrompt) ?? this.config.systemPrompt ?? CHAT_SYSTEM;
+    const system = systemText(options?.systemPrompt) ?? this.config.systemPrompt ?? modelParams().systemPrompt ?? CHAT_SYSTEM_HIGH;
     const specs = options?.toolSpecs ?? [];
     const toolsJson = specs.length > 0 ? toOpenAITools(specs) : null;
     const engineMessages = toEngineMessages(messages);
@@ -230,12 +230,12 @@ export class ElthurModel extends Model<ElthurModelConfig> {
 
 //TODO create proper agent with requisite tools
 export function createQueenAgent(
-  model: ElthurModel = new ElthurModel({ systemPrompt: CHAT_SYSTEM }),
+  model: ElthurModel = new ElthurModel(),
 ): Agent {
   return new Agent({
     model,
     tools: [weatherTool],
-    systemPrompt: CHAT_SYSTEM,
+    systemPrompt: modelParams().systemPrompt ?? CHAT_SYSTEM_HIGH,
     printer: false, //HACK Never print to the TUI's stdout.
     retryStrategy: null,//FIXME Engine failures should surface, not silently retry in a loop.
     conversationManager: new SlidingWindowConversationManager({ windowSize: 10 }),

@@ -1,7 +1,7 @@
 import { CString, dlopen, ptr, type Pointer } from "bun:ffi";
 import libPath from "../../libelthur.dylib" with {type: "file"};
 import type { ToolCall } from "./tool-definitions";
-import { CHAT_SYSTEM, modelParams } from "./model-params";
+import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
 
 //NOTE elthur's C API surface we leverage this 
 const { symbols } = dlopen(libPath, {
@@ -56,7 +56,9 @@ function encodeString(s: string): Uint8Array {
 
 let model: Pointer | null = null;
 
-function ensureModel(system: string = CHAT_SYSTEM): Pointer {
+const systemPrompt = () => modelParams().systemPrompt ?? CHAT_SYSTEM_HIGH;
+
+function ensureModel(system: string = systemPrompt()): Pointer {
   if (model === null) {
     const p = modelParams();
     const systemZ = encodeString(system);
@@ -138,7 +140,7 @@ export function generate(prompt: string, system: string, maxTokens: number): str
 }
 
 export function chatGenerate(prompt: string): string {
-  return generate(prompt, CHAT_SYSTEM, 256);
+  return generate(prompt, systemPrompt(), 256);
 }
 
 export async function streamGenerate( prompt: string, system: string, maxTokens: number, onChunk: (textSoFar: string) => void, isCancelled: () => boolean = () => false): Promise<StreamResult> {
@@ -230,7 +232,7 @@ export async function streamGenerateWithTools(prompt: string, system: string, ma
 }
 
 export function streamChatWithTools(prompt: string, toolsJson: string, onChunk: (textSoFar: string) => void, isCancelled?: () => boolean): Promise<ToolStreamResult> {
-  return streamGenerateWithTools(prompt, CHAT_SYSTEM, CHAT_MAX_TOKENS, toolsJson, onChunk, isCancelled);
+  return streamGenerateWithTools(prompt, systemPrompt(), CHAT_MAX_TOKENS, toolsJson, onChunk, isCancelled);
 }
 
 export async function streamFallback( attempted: string, detail: string, onChunk: (textSoFar: string) => void, isCancelled?: () => boolean): Promise<StreamResult> {
@@ -238,7 +240,7 @@ export async function streamFallback( attempted: string, detail: string, onChunk
     `The user ran ${attempted} while logged out of Bee. ${detail} ` +
     "Write a short friendly message for them in plain sentences.";
   try {
-    return await streamGenerate(userMsg, CHAT_SYSTEM, FALLBACK_MAX_TOKENS, onChunk, isCancelled);
+    return await streamGenerate(userMsg, systemPrompt(), FALLBACK_MAX_TOKENS, onChunk, isCancelled);
   } catch (e) {
     if (e instanceof EngineCancelled) throw e;
     const text =
