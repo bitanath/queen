@@ -1,7 +1,5 @@
-// Dashboard API surface. The dashboard renders from a DashboardSpec; both the
-// hardcoded demo presets and (later) agent/tool output go through the same
-// normalizeDashboardSpec, so a single shape drives every panel.
 import type { Column } from "../components/table";
+import type { DitherColor, DitherVariant } from "../components/sparkline-utils";
 
 export type Align = "left" | "right" | "center";
 
@@ -11,7 +9,15 @@ export type LinePoint = number | { label?: string; value: number };
 
 export type ChartSpec =
   | { type: "bar"; title: string; data: BarItem[] }
-  | { type: "sparkline"; title: string; data: number[]; label?: string }
+  | {
+      type: "sparkline";
+      title: string;
+      data: number[];
+      label?: string;
+      color?: DitherColor;
+      variant?: DitherVariant;
+      markerIndex?: number;
+    }
   | { type: "gauge"; title: string; value: number; label?: string; min?: number; max?: number }
   | { type: "line"; title: string; data: LinePoint[] }
   | { type: "pie"; title: string; data: BarItem[] }
@@ -31,10 +37,26 @@ export type DashboardSpec = { charts: ChartSpec[]; sessions: SessionsSpec };
 
 export type Row = Record<string, unknown>;
 
-// MARK: - normalization
-
 const CHART_TYPES = new Set(["bar", "sparkline", "gauge", "line", "pie", "heatmap"]);
 const ALIGNS = new Set<Align>(["left", "right", "center"]);
+const DITHER_COLORS = new Set<DitherColor>(["green", "blue", "purple", "pink", "orange", "red", "grey"]);
+const DITHER_VARIANTS = new Set<DitherVariant>(["gradient", "dotted", "hatched", "solid"]);
+
+// MARK: - helpers for all kinds of logic
+
+export function tableColumns(spec: SessionsSpec): Column<Row>[] {
+  return spec.columns.map((header, i) => ({
+    key: header,
+    header,
+    align: spec.aligns?.[i] ?? "left",
+  }));
+}
+
+export function tableRows(spec: SessionsSpec): Row[] {
+  return spec.rows.map((cells) =>
+    Object.fromEntries(spec.columns.map((header, i) => [header, cells[i] ?? ""])),
+  );
+}
 
 function toStr(v: unknown): string {
   if (typeof v === "string") return v;
@@ -51,7 +73,10 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
+
+
 function normalizeChart(panel: unknown): ChartSpec | null {
+  //TODO returns chart to fit the interface panel according to the parsed panel.type
   if (!isObject(panel)) return null;
   const type = toStr(panel.type);
   if (!CHART_TYPES.has(type)) return null;
@@ -70,15 +95,23 @@ function normalizeChart(panel: unknown): ChartSpec | null {
       .filter((d): d is BarItem => d !== null);
     return { type: "bar", title, data };
   }
-
-  if (type === "sparkline") {
+  else if (type === "sparkline") {
     const data = (Array.isArray(panel.data) ? panel.data : [])
       .map(toNum)
       .filter((n): n is number => n !== null);
-    return { type: "sparkline", title, data, ...(typeof panel.label === "string" ? { label: panel.label } : {}) };
+    const spec: Extract<ChartSpec, { type: "sparkline" }> = { type: "sparkline", title, data };
+    if (typeof panel.label === "string") spec.label = panel.label;
+    if (typeof panel.color === "string" && DITHER_COLORS.has(panel.color as DitherColor)) {
+      spec.color = panel.color as DitherColor;
+    }
+    if (typeof panel.variant === "string" && DITHER_VARIANTS.has(panel.variant as DitherVariant)) {
+      spec.variant = panel.variant as DitherVariant;
+    }
+    const marker = toNum(panel.markerIndex);
+    if (marker !== null) spec.markerIndex = marker;
+    return spec;
   }
-
-  if (type === "pie") {
+  else if (type === "pie") {
     const data: BarItem[] = (Array.isArray(panel.data) ? panel.data : [])
       .map((d): BarItem | null => {
         if (!isObject(d)) return null;
@@ -91,8 +124,7 @@ function normalizeChart(panel: unknown): ChartSpec | null {
       .filter((d): d is BarItem => d !== null);
     return { type: "pie", title, data };
   }
-
-  if (type === "line") {
+  else if (type === "line") {
     const data: LinePoint[] = (Array.isArray(panel.data) ? panel.data : [])
       .map((d): LinePoint | null => {
         if (typeof d === "number") return Number.isFinite(d) ? d : null;
@@ -104,25 +136,26 @@ function normalizeChart(panel: unknown): ChartSpec | null {
       .filter((d): d is LinePoint => d !== null);
     return { type: "line", title, data };
   }
-
-  if (type === "heatmap") {
+  else if (type === "heatmap") {
     const data = (Array.isArray(panel.data) ? panel.data : [])
       .map((row) => (Array.isArray(row) ? row.map(toNum).filter((n): n is number => n !== null) : []))
       .filter((row) => row.length > 0);
     const rowLabels = Array.isArray(panel.rowLabels) ? panel.rowLabels.map(toStr) : undefined;
     return { type: "heatmap", title, data, ...(rowLabels && rowLabels.length > 0 ? { rowLabels } : {}) };
   }
-
-  const min = toNum(panel.min);
-  const max = toNum(panel.max);
-  return {
-    type: "gauge",
-    title,
-    value: toNum(panel.value) ?? 0,
-    ...(typeof panel.label === "string" ? { label: panel.label } : {}),
-    ...(min !== null ? { min } : {}),
-    ...(max !== null ? { max } : {}),
-  };
+  else{
+    const min = toNum(panel.min);
+    const max = toNum(panel.max);
+    return {
+      type: "gauge",
+      title,
+      value: toNum(panel.value) ?? 0,
+      ...(typeof panel.label === "string" ? { label: panel.label } : {}),
+      ...(min !== null ? { min } : {}),
+      ...(max !== null ? { max } : {}),
+    };
+  }
+  
 }
 
 function normalizeSessions(input: unknown): SessionsSpec {
@@ -176,6 +209,7 @@ export function normalizeDashboardSpec(input: unknown, fallback: DashboardSpec =
 
 const THROUGHPUT = [
   3, 5, 4, 8, 7, 6, 9, 12, 10, 14, 11, 13, 17, 15, 18, 16, 21, 19, 23, 20, 25, 22, 27, 24,
+  26, 29, 28, 31, 30, 34, 33, 37, 35, 39, 38, 42, 40, 44, 43, 47,
 ];
 
 const RAW_DEFAULT: unknown = {
@@ -190,7 +224,15 @@ const RAW_DEFAULT: unknown = {
         { label: "thu", value: 61 },
       ],
     },
-    { type: "sparkline", title: "throughput", data: THROUGHPUT },
+    {
+      type: "sparkline",
+      title: "throughput",
+      data: THROUGHPUT,
+      label: "tok/s",
+      color: "blue",
+      variant: "gradient",
+      markerIndex: THROUGHPUT.length - 1,
+    },
     { type: "gauge", title: "saturation", value: 68, label: "vram" },
   ],
   sessions: {
@@ -212,8 +254,6 @@ const RAW_DEFAULT: unknown = {
   },
 };
 
-// A deliberately different preset to exercise the API: chart types swapped and
-// a different table entirely.
 const RAW_OPS: unknown = {
   charts: [
     {
@@ -270,18 +310,4 @@ export const DEMO_SPECS: Record<string, DashboardSpec> = {
   ops: normalizeDashboardSpec(RAW_OPS, DEFAULT_DASHBOARD_SPEC),
 };
 
-// MARK: - view helpers
 
-export function tableColumns(spec: SessionsSpec): Column<Row>[] {
-  return spec.columns.map((header, i) => ({
-    key: header,
-    header,
-    align: spec.aligns?.[i] ?? "left",
-  }));
-}
-
-export function tableRows(spec: SessionsSpec): Row[] {
-  return spec.rows.map((cells) =>
-    Object.fromEntries(spec.columns.map((header, i) => [header, cells[i] ?? ""])),
-  );
-}

@@ -1,59 +1,34 @@
 import { useRef } from "react";
-import type { ReactNode } from "react";
+
 import type { TextareaRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
+import { Columns } from "./components/columns";
+import { Banner } from "./components/banner";
 import { useTheme } from "./theme/use-theme";
 import { Alert } from "./components/alert";
 import { Badge } from "./components/badge";
-import { Card } from "./components/card";
-import { Columns } from "./components/columns";
 import { Stack } from "./components/stack";
+import { Card } from "./components/card";
 
-import { Chat, useChat } from "./chat";
-import { Gauge } from "./interface/gauge";
-import { Banner } from "./components/banner";
-import { Divider } from "./components/divider";
-import { BarChart } from "./interface/bar-chart";
-import { LineChart } from "./interface/line-chart";
-import { PieChart } from "./interface/pie-chart";
-import { Heatmap } from "./interface/heatmap";
-import { KeyValue } from "./components/key-value";
-import { Sparkline } from "./interface/sparkline";
-import { Table } from "./components/table";
-import { QUEEN_VERSION } from "./app";
-import { useUi } from "./userinterface";
 import { tableColumns, tableRows, type ChartSpec, type Row } from "./utils/dashboard-spec";
-import { useDashboardSpec } from "./utils/use-dashboard-spec";
+import { MultiProgress, type MultiProgressItem } from "./components/multi-progress";
+import { modelParams } from "./functions/model-params";
+import { useChat } from "./libraries/chat-control";
+import { LineChart } from "./interface/line-chart";
+import { Sparkline } from "./interface/sparkline";
+import { KeyValue } from "./components/key-value";
+import { BarChart } from "./interface/bar-chart";
+import { PieChart } from "./interface/pie-chart";
+import { Divider } from "./components/divider";
+import { Heatmap } from "./interface/heatmap";
+import { Table } from "./components/table";
+import { Gauge } from "./interface/gauge";
 
-const ChartPanel = ({ title, width, height, children}: { title: string; width?: number; height: number; children: ReactNode;}) => {
-  const theme = useTheme();
-  return (
-    <box
-      flexGrow={1}
-      width={width}
-      height={height}
-      borderStyle="rounded"
-      borderColor={theme.colors.border}
-      title={title}
-      titleColor={theme.colors.mutedForeground}
-      paddingLeft={1}
-      paddingRight={1}
-      overflow="hidden"
-    >
-      <box
-        flexGrow={1}
-        width="100%"
-        minHeight={0}
-        overflow="hidden"
-        flexDirection="column"
-        justifyContent="center"
-        alignItems="center"
-      >
-        {children}
-      </box>
-    </box>
-  );
-};
+import { useDashboardSpec } from "./utils/use-dashboard-spec";
+import { ChartPanel } from "./interface/chart-panel";
+import { useUi } from "./userinterface";
+import { QUEEN_VERSION } from "./app";
+import { Chat } from "./chat";
 
 export function Dashboard() {
   const { width, height } = useTerminalDimensions();
@@ -81,7 +56,6 @@ export function Dashboard() {
   const lineHeight = Math.max(3, chartContentH - 2); // grid rows (axis + labels take 2)
   const pieRadius = Math.max(2, Math.min(5, Math.floor((chartContentW - 20) / 4), Math.floor(chartContentH / 2)));
 
-  // Chat + sessions are equal-width columns.
   const colGap = 1;
   const colW = Math.floor((innerW - colGap) / 2);
   const tableInnerW = Math.max(20, colW - 4);
@@ -90,9 +64,34 @@ export function Dashboard() {
   const sessionRows = tableRows(spec.sessions);
   const hasStats = (spec.sessions.stats?.length ?? 0) > 0;
 
+  const contextLimit = modelParams().contextWindow;
+  const contextItems: MultiProgressItem[] = [
+    {
+      id: "tokens",
+      label: "tokens",
+      value: chat.context.used,
+      total: contextLimit,
+      status: chat.busy && !chat.context.active ? "running" : "done",
+    },
+  ];
+  if (chat.context.active) {
+    contextItems.push({
+      id: chat.context.active,
+      label: chat.context.active,
+      value: chat.context.activeUsed,
+      total: contextLimit,
+      status: "running",
+    });
+  }
+  
+  const contextColW = Math.floor((innerW - colGap) / 3);
+  const contextBarWidth = Math.max(3, contextColW - 34);
+
   const inputRows = 1;
   const inputH = inputRows + 2; // text-area border
-  const stack2H = 7; // alert (4) + gap (1) + banner (2)
+  const contextRows = chat.context.active ? 2 : 1; // queen (+ active specialist)
+  const contextRowH = contextRows + 2; // content + top/bottom border (title is in the border)
+  const stack2H = contextRowH + 1 + 4; // + gap + offline alert
   const stack3H = Math.max(6, height - (1 + chartH + stack2H + 3));
   const bodyH = Math.max(4, stack3H - inputH - 1); // columns share what's left of the input row
   const cardChrome = 4; // border (2) + title block (2)
@@ -106,7 +105,17 @@ export function Dashboard() {
       case "bar":
         return <BarChart data={panel.data} width={chartContentW} />;
       case "sparkline":
-        return <Sparkline data={panel.data} width={chartContentW} label={panel.label} />;
+        return (
+          <Sparkline
+            data={panel.data}
+            width={chartContentW}
+            height={Math.max(3, chartContentH - 1)}
+            color={panel.color}
+            variant={panel.variant}
+            markerIndex={panel.markerIndex}
+            label={panel.label}
+          />
+        );
       case "gauge":
         return <Gauge value={panel.value} size={gaugeSize} label={panel.label} min={panel.min} max={panel.max} />;
       case "line":
@@ -144,12 +153,38 @@ export function Dashboard() {
         </box>
 
         <Stack gap={1} flexShrink={0}>
-          <Alert variant="warning" title="context window">
-            12,480 / 32k tokens (39%) — older turns will be trimmed.
+          <Columns gap={colGap} height={contextRowH} weights={[2, 1]}>
+            <box
+              flexDirection="column"
+              borderStyle="rounded"
+              borderColor={theme.colors.border}
+              title="details"
+              titleColor={theme.colors.mutedForeground}
+              paddingLeft={1}
+              paddingRight={1}
+            >
+              <Banner variant="info">Items: (some dummy here)</Banner>
+            </box>
+            <box
+              flexDirection="column"
+              borderStyle="rounded"
+              borderColor={theme.colors.border}
+              title="context"
+              titleColor={theme.colors.mutedForeground}
+              paddingLeft={1}
+              paddingRight={1}
+            >
+              <MultiProgress
+                items={contextItems}
+                labelWidth={8}
+                barWidth={contextBarWidth}
+                compact
+              />
+            </box>
+          </Columns>
+          <Alert variant="warning" title="Bee Offline">
+            Defaulting to local model.
           </Alert>
-          <Banner variant="info" title="offline fallback">
-            Bee unreachable — answering with the local model.
-          </Banner>
         </Stack>
 
         {/* chat + sessions, with a full-width input beneath */}

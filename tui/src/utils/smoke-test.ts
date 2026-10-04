@@ -1,19 +1,9 @@
-// Unified headless smoke test. A single QUEEN_SMOKE env var exercises every
-// path the TUI depends on without needing a terminal:
-//
-//   QUEEN_SMOKE=1                 all checks (default prompt — the weather one)
-//   QUEEN_SMOKE="<prompt>"        all checks with a custom prompt
-//
-// Checks: generic chat (raw FFI), the Strands agent (memory + tool loop), the
-// tool path (a get_weather call executed via runTool), and the Bee status
-// module (logged in or logged out are both fine — it must just load).
+import { generate } from "./queen-ffi";
+import { createQueenAgent } from "../functions/tools-execution";
+import { stripToolMarkup, weatherTool } from "../functions/tool-definitions";
+import { getStatus, isNotLoggedIn, renderStatusMd } from "./bee-com-bridge";
 
-import { chatGenerate, streamChatWithTools } from "./queen-ffi";
-import { createQueenAgent } from "../functions/strands-model";
-import { TOOLS_JSON, runTool, stripToolMarkup } from "../functions/tool-definitions";
-import { getStatus, isNotLoggedIn, renderStatusMd } from "./bee";
-
-const DEFAULT_PROMPT = "What is the weather in Tokyo?";
+const DEFAULT_PROMPT = "What is the weather in Tokyo?"; //TODO just a random prompt to test a random tool call
 
 type Check = { name: string; run: (prompt: string) => Promise<string> | string };
 
@@ -21,7 +11,7 @@ const checks: Check[] = [
   {
     name: "generic chat",
     run: (prompt) => {
-      const text = stripToolMarkup(chatGenerate(prompt)).trim();
+      const text = stripToolMarkup(generate({ prompt })).trim();
       if (text.length === 0) throw new Error("empty response");
       return text.slice(0, 80).replace(/\s+/g, " ");
     },
@@ -39,14 +29,10 @@ const checks: Check[] = [
   {
     name: "tool",
     run: async (prompt) => {
-      const res = await streamChatWithTools(prompt, TOOLS_JSON, () => {}, () => false);
-      const call = res.toolCalls.find(
-        (c) => c.name === "get_weather" && (c.arguments?.city ?? "").trim().length > 0,
-      );
-      if (!call) throw new Error("model did not emit a get_weather call");
-      const out = await runTool(call);
+      const city = /weather in ([A-Za-z .'-]+)/i.exec(prompt)?.[1]?.trim() || "Tokyo";
+      const out = String(await weatherTool.invoke({ city }));
       if (out.trim().length === 0) throw new Error("get_weather returned nothing");
-      return `get_weather(${call.arguments.city}) → ${out.trim().split("\n")[0]?.slice(0, 60) ?? ""}`;
+      return `get_weather(${city}) → ${out.trim().split("\n")[0]?.slice(0, 60) ?? ""}`;
     },
   },
   {

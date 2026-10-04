@@ -12,6 +12,8 @@ export interface ColumnsProps {
   height?: number | `${number}%`;
   flexGrow?: number;
   minHeight?: number;
+  /** Per-column flex weights (defaults to 1 each). e.g. [2, 1] = 2/3 + 1/3. */
+  weights?: number[];
 }
 
 const ALIGN_MAP: Record<
@@ -31,6 +33,7 @@ export const Columns = ({
   height,
   flexGrow,
   minHeight,
+  weights,
 }: ColumnsProps) => {
   const items = React.Children.toArray(children);
 
@@ -45,7 +48,7 @@ export const Columns = ({
       minHeight={minHeight}
     >
       {items.map((child, index) => (
-        <box key={index} flexGrow={1} flexBasis={0} flexDirection="column">
+        <box key={index} flexGrow={weights?.[index] ?? 1} flexBasis={0} flexDirection="column">
           {child}
         </box>
       ))}

@@ -1,7 +1,3 @@
-// Holds the active dashboard spec. The dashboard renders from `spec`; anything
-// that wants to change what's shown calls `setSpec(normalizeDashboardSpec(...))`.
-// For now ctrl+e cycles the demo presets to test the surface; the agent tool
-// (when wired) just calls setSpec.
 import { useKeyboard } from "@opentui/react";
 import { useState } from "react";
 

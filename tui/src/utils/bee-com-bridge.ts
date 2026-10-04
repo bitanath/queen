@@ -1,36 +1,24 @@
-// Bee, in-process. Deep imports into vendored bee-cli sources — no `bee`
-// binary, no subprocess. Every function returns data (markdown strings for
-// chat bubbles); NOTHING prints. Logged-out calls throw NotLoggedIn so the
-// chat layer can decide the engine fallback. Mirrors the CLI's behavior,
-// endpoints, and wording (sources/commands/*) 1:1.
-
 import type { CommandContext } from "@/commands/types";
 import { createDeveloperClient } from "@/client";
-import { requestClientJson } from "@/client/clientApi";
 import { fetchClientMe } from "@/client/clientMe";
+import { requestClientJson } from "@/client/clientApi";
+
 import { createCommandContext } from "@/context";
 import { callBeeTextTool } from "@/commands/mcpToolOutput";
 import { getEnvironmentConfig, type Environment } from "@/environment";
 import { todayResource } from "@/resources/today";
-import {
-  clearPairingState,
-  clearProxyConfig,
-  clearToken,
-  loadPairingState,
-  loadToken,
-  savePairingState,
-  saveToken,
-} from "@/secureStore";
+import { clearPairingState, clearProxyConfig, clearToken, loadPairingState, loadToken, savePairingState, saveToken, } from "@/secureStore";
 import { requestAppPairing } from "@/commands/auth/appPairingRequest";
-import {
-  decryptAppPairingToken,
-  generateAppPairingKeyPair,
-} from "@/utils/appPairingCrypto";
+import { decryptAppPairingToken, generateAppPairingKeyPair, } from "@/utils/appPairingCrypto";
 import { renderQrCode } from "@/utils/qrCode";
-import {
-  formatRecordMarkdown,
-  resolveTimeZone,
-} from "@/utils/markdown";
+import { formatRecordMarkdown, resolveTimeZone, } from "@/utils/markdown";
+
+import type {
+  LoginOptions,
+  PairingOptions,
+  PollPairingOptions,
+  SearchBeeOptions,
+} from "./interfaces-types";
 
 const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev"; //NOTE Pinned bee-cli submodule (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
 const ELTHUR_SHA = process.env.QUEEN_ELTHUR_SHA ?? "dev"; //NOTE elthur revision this build used (usually latest main); "dev" when run unbundled.
@@ -157,13 +145,9 @@ function parseProfile(payload: unknown): Record<string, unknown> {
   };
 }
 
-export async function searchBee(
-  query: string,
-  limit = 5,
-  env: Environment = "prod",
-): Promise<string> {
-  const ctx = await beeContext(env);
-  const data = await callBeeTextTool(ctx, "bee_search", { query, limit });
+export async function searchBee(opts: SearchBeeOptions): Promise<string> {
+  const ctx = await beeContext(opts.env ?? "prod");
+  const data = await callBeeTextTool(ctx, "bee_search", { query: opts.query, limit: opts.limit ?? 5 });
   return toolDataMd("Bee Search", data);
 }
 
@@ -198,9 +182,10 @@ export async function getTodayContext(env: Environment = "prod"): Promise<string
   return toolDataMd("Today", data);
 }
 
-export async function loginWithToken(token: string, env: Environment = "prod"): Promise<string> {
-  const clean = token.trim();
+export async function loginWithToken(opts: LoginOptions): Promise<string> {
+  const clean = opts.token.trim();
   if (!clean) throw new Error("Missing token.");
+  const env = opts.env ?? "prod";
   const ctx = await beeContext(env);
   const apiCtx: CommandContext = { ...ctx, client: createDeveloperClient(env) };
   const user = await fetchClientMe(apiCtx, clean);
@@ -219,10 +204,9 @@ function defaultAppId(env: Environment): string {
   return env === "staging" ? "pk5z3uuzjpxj4f7frk6rsq2f" : "ph9fssu1kv1b0hns69fxf7rx";
 }
 
-export async function startPairing(
-  env: Environment = "prod",
-  withQr = false,
-): Promise<PairingStart> {
+export async function startPairing(opts: PairingOptions = {}): Promise<PairingStart> {
+  const env = opts.env ?? "prod";
+  const withQr = opts.withQr ?? false;
   const existing = await loadPairingState(env);
   if (existing) {
     const exp = Date.parse(existing.expiresAt);
@@ -267,10 +251,9 @@ export async function startPairing(
 
 export type PairingOutcome = { name: string };
 
-export async function pollPairing(
-  env: Environment = "prod",
-  isCancelled: () => boolean = () => false,
-): Promise<PairingOutcome> {
+export async function pollPairing(opts: PollPairingOptions = {}): Promise<PairingOutcome> {
+  const env = opts.env ?? "prod";
+  const isCancelled = opts.isCancelled ?? (() => false);
   const state = await loadPairingState(env);
   if (!state) throw new Error("No pairing session. Run /login first.");
   const expMs = Date.parse(state.expiresAt);

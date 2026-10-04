@@ -1,62 +1,59 @@
 /* @jsxImportSource @opentui/react */
-// Ported from termcn `opentui/sparkline`.
+// Dither sparkline, reduced from termcn `opentui/dither-sparkline`.
 import { useTheme } from "../theme/use-theme";
+import {
+  DITHER_PALETTE,
+  renderSparkline,
+  type DitherColor,
+  type DitherVariant,
+} from "../components/sparkline-utils";
 
 export interface SparklineProps {
   data: number[];
   width?: number;
-  color?: string;
+  height?: number;
+  color?: DitherColor;
   label?: string;
+  variant?: DitherVariant;
+  markerIndex?: number;
 }
-
-const BRAILLE_LEVELS = ["⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿", "⣿"];
-const EMPTY = "⣀";
-
-const normalize = (data: number[], levels: number): number[] => {
-  if (data.length === 0) return [];
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min;
-  if (range === 0) return data.map(() => Math.floor(levels / 2));
-  return data.map((v) => Math.round(((v - min) / range) * (levels - 1)));
-};
 
 export const Sparkline = ({
   data,
   width = 20,
-  color,
+  height = 4,
+  color = "blue",
   label,
+  variant = "gradient",
+  markerIndex,
 }: SparklineProps) => {
   const theme = useTheme();
-  const resolvedColor = color ?? theme.colors.primary;
+  const resolvedColor = DITHER_PALETTE[color] ?? theme.colors.primary;
 
   if (data.length === 0) {
     return (
-      <box>
-        {label && <text fg={theme.colors.mutedForeground}>{`${label} `}</text>}
+      <box flexDirection="row" gap={1}>
+        {label && <text fg={theme.colors.mutedForeground}>{label}</text>}
         <text fg={theme.colors.mutedForeground}>{"─".repeat(width)}</text>
       </box>
     );
   }
 
-  const sampled =
-    data.length > width
-      ? Array.from(
-          { length: width },
-          (_, i) =>
-            data[Math.round((i / (width - 1)) * (data.length - 1))] ?? 0,
-        )
-      : data;
-
-  const levels = normalize(sampled, BRAILLE_LEVELS.length);
-  const sparkStr = levels
-    .map((l) => BRAILLE_LEVELS[l] ?? EMPTY)
-    .join("");
+  const frame = renderSparkline(data, {
+    width,
+    height,
+    variant,
+    ...(markerIndex !== undefined ? { markerIndex } : {}),
+  });
 
   return (
-    <box flexDirection="row" gap={1}>
+    <box flexDirection="column">
       {label && <text fg={theme.colors.mutedForeground}>{label}</text>}
-      <text fg={resolvedColor}>{sparkStr}</text>
+      {frame.map((row, index) => (
+        <text key={index} fg={resolvedColor}>
+          {row.map((cell) => cell.char).join("")}
+        </text>
+      ))}
     </box>
   );
 };

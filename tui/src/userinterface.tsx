@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react";
 import { createClipboard, createHostClipboard, createRendererClipboardAdapter } from "@opentui/core";
 
@@ -7,6 +7,9 @@ import { ThemeModal } from "./interface/theme-modal";
 import { CommandsModal } from "./interface/commands-modal";
 import { StatusBar } from "./interface/status-bar";
 import { useToast } from "./interface/toaster";
+import { Modal } from "./components/modal";
+import { ToolApproval } from "./components/tool-approval";
+import { allowAlways, setApprovalHandler, type ApprovalRequest } from "./utils/approval-broker";
 
 type ModalKind = "theme" | "help" | "commands";
 
@@ -37,8 +40,29 @@ function isCombo(key: { ctrl: boolean; name: string }, name: string): boolean {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [modal, setModal] = useState<ModalKind | null>(null);
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const approvalResolver = useRef<((ok: boolean) => void) | null>(null);
   const renderer = useRenderer();
   const showToast = useToast();
+
+  // Bridge tool execution to the approval modal. Headless runs have no handler.
+  useEffect(() => {
+    setApprovalHandler(
+      (req) =>
+        new Promise<boolean>((resolve) => {
+          approvalResolver.current = resolve;
+          setApproval(req);
+        }),
+    );
+    return () => setApprovalHandler(null);
+  }, []);
+
+  const resolveApproval = (ok: boolean, always = false) => {
+    if (always && approval) allowAlways(approval.name);
+    approvalResolver.current?.(ok);
+    approvalResolver.current = null;
+    setApproval(null);
+  };
 
   // Native (NSPasteboard) clipboard with an OSC 52 fallback, built once.
   const clipboard = useMemo(
@@ -87,7 +111,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const value: UiContextValue = {
     openModal: (next) => setModal(next),
     closeModal: () => setModal(null),
-    modalOpen: modal !== null,
+    modalOpen: modal !== null || approval !== null,
   };
 
   return (
@@ -100,6 +124,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         {modal === "theme" && <ThemeModal onClose={() => setModal(null)} />}
         {modal === "help" && <HelpModal onClose={() => setModal(null)} />}
         {modal === "commands" && <CommandsModal onClose={() => setModal(null)} />}
+        {approval && (
+          <Modal title="tool approval" onClose={() => resolveApproval(false)}>
+            <ToolApproval
+              name={approval.name}
+              args={approval.args}
+              risk={approval.risk}
+              onApprove={() => resolveApproval(true)}
+              onDeny={() => resolveApproval(false)}
+              onAlwaysAllow={() => resolveApproval(true, true)}
+              active
+            />
+          </Modal>
+        )}
       </box>
     </UiContext.Provider>
   );

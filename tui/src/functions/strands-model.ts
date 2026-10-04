@@ -1,11 +1,11 @@
 import {type BaseModelConfig, type JSONSchema, type Message, type ModelStreamEvent, type StreamOptions, type SystemPrompt, type StopReason, type ToolSpec} from "@strands-agents/sdk"
 import { beginStream, freeStream, pollStream, streamTruncated, toolCallsOf, type EngineMessage, } from "../utils/queen-ffi";
-import { Agent, Model, SlidingWindowConversationManager } from "@strands-agents/sdk";
+import { Model } from "@strands-agents/sdk";
 import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
-import { stripToolMarkup, weatherTool } from "./tool-definitions";
+import { stripToolMarkup } from "./tool-definitions";
 
 
-const CONTEXT_WINDOW = 4096;
+const CONTEXT_WINDOW = 32768;
 const DEFAULT_MAX_TOKENS = 1024;
 
 const OPEN_TAGS = ["<tool_call>", "<|tool_call_start|>"];
@@ -111,12 +111,14 @@ export class ElthurModel extends Model<ElthurModelConfig> {
   lastTruncated = false;
   lastMaxTokens = DEFAULT_MAX_TOKENS;
   lastStopReason: StopReason = "endTurn";
+  lastContextUsed = 0;
+  lastContextLimit = CONTEXT_WINDOW;
 
   constructor(config: ElthurModelConfig = {}) {
     super();
     this.config = {
       modelId: "elthur-local",
-      contextWindowLimit: CONTEXT_WINDOW,
+      contextWindowLimit: modelParams().contextWindow,
       maxTokens: DEFAULT_MAX_TOKENS,
       ...config,
     };
@@ -138,7 +140,15 @@ export class ElthurModel extends Model<ElthurModelConfig> {
     if (engineMessages.length === 0) engineMessages.push({ role: "user", content: "" });
     const maxTokens = this.config.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-    const handle = beginStream(engineMessages, system, toolsJson, maxTokens);
+    // Rough context accounting for the dashboard (no tokenizer available locally).
+    const approxChars =
+      engineMessages.reduce((n, m) => n + m.content.length, 0) +
+      system.length +
+      (toolsJson?.length ?? 0);
+    this.lastContextUsed = Math.ceil(approxChars / 4);
+    this.lastContextLimit = this.config.contextWindowLimit ?? CONTEXT_WINDOW;
+
+    const handle = beginStream({ messages: engineMessages, system, toolsJson, maxTokens });
     const signal = options?.cancelSignal;
     const started = Date.now();
     const out = new Uint8Array(65536);
@@ -156,7 +166,7 @@ export class ElthurModel extends Model<ElthurModelConfig> {
           break;
         }
         const n = pollStream(handle, out);
-        if (n === -2) throw new Error("elthur engine failed");
+        if (n === -2) throw new Error("Engine failed");
         if (n > 0) {
           text += decoder.decode(out.subarray(0, n), { stream: true });
           const safe = stripToolMarkup(holdBackPartialMarker(text));
@@ -202,24 +212,15 @@ export class ElthurModel extends Model<ElthurModelConfig> {
       yield {
         type: "modelMetadataEvent",
         metrics: { latencyMs: Date.now() - started },
-        trace: { truncated, maxTokens },
+        trace: {
+          truncated,
+          maxTokens,
+          contextUsed: this.lastContextUsed,
+          contextLimit: this.lastContextLimit,
+        },
       };
     } finally {
       freeStream(handle);
     }
   }
-}
-
-//TODO create proper agent with requisite tools
-export function createQueenAgent(
-  model: ElthurModel = new ElthurModel(),
-): Agent {
-  return new Agent({
-    model,
-    tools: [weatherTool],
-    systemPrompt: modelParams().systemPrompt ?? CHAT_SYSTEM_HIGH,
-    printer: false, //HACK Never print to the TUI's stdout.
-    retryStrategy: null,//FIXME Engine failures should surface, not silently retry in a loop.
-    conversationManager: new SlidingWindowConversationManager({ windowSize: 10 }),
-  });
 }

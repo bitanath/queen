@@ -1,12 +1,24 @@
-/**
-* bee-cli stores credentials in the macOS Keychain via Bun.secrets
-* (bee-cli/sources/secureStore.ts). Because dist/queen is ad-hoc signed — a new
-* signature on every build — macOS treats each build as an untrusted app and
-* prompts for the login password on every launch (loadToken -> Bun.secrets.get).
-*
-* Default to bee-cli's file-based store instead: ~/.bee/token-<env> and
-* ~/.bee/pairing-<env>.json, mode 0600. Set BEE_FORCE_FILE_STORE=0 to opt back
-* into the Keychain. The env var is read lazily by secureStore, so importing
-* this before anything that loads a token is sufficient.
-**/
-process.env.BEE_FORCE_FILE_STORE ??= "1";
+import { dlopen } from "bun:ffi";
+
+process.env.BEE_FORCE_FILE_STORE ??= "1"; //HACK saves bee token in a dotfile instead of in Keychain
+
+if (process.env.QUEEN_ELTHUR_SHA == null && process.env.ELTHUR_MODEL == null) {
+  const rel = "../../../models/Qwen3.5-4B-Q5_K_M.gguf";
+  const modelPath = new URL(rel, import.meta.url).pathname;
+
+  process.env.ELTHUR_MODEL = modelPath; //HACK loads model even for bun run dev so I can continuously test my changes woot!
+
+  try {
+    const lib = process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6";
+    const symbols = dlopen(lib, {
+      setenv: { args: ["cstring", "cstring", "i32"], returns: "i32" },
+    }).symbols;
+    (symbols.setenv as unknown as (name: string, value: string, overwrite: number) => number)(
+      "ELTHUR_MODEL",
+      modelPath,
+      1,
+    );
+  } catch {
+    console.error("Unable to set the damn env, will not be able to CD")
+  }
+}
