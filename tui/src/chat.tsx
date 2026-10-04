@@ -7,9 +7,9 @@ import { useTheme } from "./theme/use-theme";
 import {loginWithToken, logout, pollPairing, renderStatusMd, searchBee, startPairing} from "./utils/bee";
 import { getMe, getStatus, getTodayBrief, getTodayContext, isNotLoggedIn} from "./utils/bee";
 import { EngineCancelled, streamFallback } from "./utils/queen-ffi";
-import { createQueenAgent, ElthurModel } from "./utils/strands-model";
+import { createQueenAgent, ElthurModel } from "./functions/strands-model";
 import { Spinner } from "./components/spinner";
-import { stripToolMarkup } from "./utils/tool-definitions";
+import { stripToolMarkup } from "./functions/tool-definitions";
 import { useUi } from "./userinterface";
 
 type Role = "user" | "queen" | "error" | "system";

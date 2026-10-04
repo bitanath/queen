@@ -1,7 +1,7 @@
 import { CString, dlopen, ptr, type Pointer } from "bun:ffi";
 import libPath from "../../libelthur.dylib" with {type: "file"};
-import type { ToolCall } from "./tool-definitions";
-import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
+import type { ToolCall } from "../functions/tool-definitions";
+import { CHAT_SYSTEM_HIGH, modelParams } from "../functions/model-params";
 
 //NOTE elthur's C API surface we leverage this 
 const { symbols } = dlopen(libPath, {

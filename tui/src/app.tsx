@@ -3,7 +3,7 @@ import { createRoot } from "@opentui/react";
 import { ThemeProvider } from "./theme/provider";
 import { loadInitialTheme } from "./theme/themes";
 import { AppShell } from "./userinterface";
-import { Toaster } from "./interfaces/toaster";
+import { Toaster } from "./interface/toaster";
 import { createCliRenderer } from "@opentui/core";
 
 export const QUEEN_VERSION = "v0.1.0";

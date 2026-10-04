@@ -1,24 +1,6 @@
-import {
-  Agent,
-  Model,
-  SlidingWindowConversationManager,
-  type BaseModelConfig,
-  type JSONSchema,
-  type Message,
-  type ModelStreamEvent,
-  type StreamOptions,
-  type SystemPrompt,
-  type StopReason,
-  type ToolSpec,
-} from "@strands-agents/sdk";
-import {
-  beginStream,
-  freeStream,
-  pollStream,
-  streamTruncated,
-  toolCallsOf,
-  type EngineMessage,
-} from "./queen-ffi";
+import {type BaseModelConfig, type JSONSchema, type Message, type ModelStreamEvent, type StreamOptions, type SystemPrompt, type StopReason, type ToolSpec} from "@strands-agents/sdk"
+import { beginStream, freeStream, pollStream, streamTruncated, toolCallsOf, type EngineMessage, } from "../utils/queen-ffi";
+import { Agent, Model, SlidingWindowConversationManager } from "@strands-agents/sdk";
 import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
 import { stripToolMarkup, weatherTool } from "./tool-definitions";
 

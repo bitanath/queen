@@ -2,11 +2,11 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react";
 import { createClipboard, createHostClipboard, createRendererClipboardAdapter } from "@opentui/core";
 
-import { HelpModal } from "./interfaces/help-modal";
-import { ThemeModal } from "./interfaces/theme-modal";
-import { CommandsModal } from "./interfaces/commands-modal";
-import { StatusBar } from "./interfaces/status-bar";
-import { useToast } from "./interfaces/toaster";
+import { HelpModal } from "./interface/help-modal";
+import { ThemeModal } from "./interface/theme-modal";
+import { CommandsModal } from "./interface/commands-modal";
+import { StatusBar } from "./interface/status-bar";
+import { useToast } from "./interface/toaster";
 
 type ModalKind = "theme" | "help" | "commands";
 

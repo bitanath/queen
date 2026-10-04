@@ -15,7 +15,6 @@
 # Env:
 #   ELTHUR_DIR        elthur checkout used when --dylib is absent (default ../elthur)
 #   QUEEN_MODELS_DIR  download directory (default ./models)
-#   QUEEN_DYLIB       prebuilt dylib to stage (overridden by --dylib)
 #   QUEEN_MODEL       model file to use when no model/url/--model is given
 #   QUEEN_REBUILD_DYLIB  force an elthur rebuild instead of reusing a built dylib
 #   QUEEN_NO_ELTHUR_UPDATE  skip `git submodule update --remote elthur`
@@ -67,12 +66,10 @@ alias_family() {
   esac
 }
 
-# First catalog row for a family = its lowest parameter option.
 lowest_params() {
   catalog | awk -v f="$1" '$1 == f { print $2; exit }'
 }
 
-# "repo|filename-template" for a family+params pair.
 resolve_row() {
   catalog | awk -v f="$1" -v p="$2" '$1 == f && $2 == p { print $3 "|" $4; found = 1 } END { exit found ? 0 : 1 }'
 }
@@ -132,27 +129,14 @@ fetch_model() {
   fi
 }
 
-# Pick the elthur dylib once: --dylib wins, then QUEEN_DYLIB, otherwise take the
-# dylib committed in the elthur submodule (outputs/lib). Because that dylib is
-# committed alongside the source it was built from and the submodule pins the
-# exact revision, a plain checkout always yields a matching dylib -- no Zig
-# build needed. Set QUEEN_REBUILD_DYLIB to force scripts/build.sh instead.
 ensure_dylib() {
   if [ -n "$DYLIB" ]; then
     [ -f "$DYLIB" ] || {
       echo "dylib not found: $DYLIB" >&2
       exit 1
     }
-  elif [ -n "${QUEEN_DYLIB:-}" ]; then
-    DYLIB="$QUEEN_DYLIB"
-    [ -f "$DYLIB" ] || {
-      echo "dylib not found: $DYLIB" >&2
-      exit 1
-    }
   else
-    # Default to the elthur submodule and keep it on latest main. Disable with
-    # QUEEN_NO_ELTHUR_UPDATE=1 (offline / reproducible); skipped entirely when an
-    # explicit ELTHUR_DIR checkout is in use.
+    # NOTE Elthur submodule dylib will always be the latest and developed to guarantee support
     if [ -d "$ROOT/.git" ] && [ -z "${ELTHUR_DIR:-}" ]; then
       if [ -n "${QUEEN_NO_ELTHUR_UPDATE:-}" ]; then
         [ -f "$ELTHUR/outputs/lib/libelthur.dylib" ] ||
@@ -174,29 +158,11 @@ ensure_dylib() {
       exit 1
     }
   fi
-  export QUEEN_DYLIB="$DYLIB"
 }
 
-# Append a GGUF (plus an ELTHBLOB trailer) to a compiled executable.
-# The engine (elthur core/hosts.zig) finds the model via this 80-byte trailer
-# and mmaps the bytes recorded there. On macOS the code signature is appended
-# after the trailer (build de-signs, appends, then signs), so the trailer sits
-# just before LC_CODE_SIGNATURE; elsewhere it is the last 80 bytes of the file.
-#
-# Trailer layout (little-endian C struct "<8sIIQQQQ32s", 80 bytes):
-#   0  magic "ELTHBLOB"
-#   8  u32 version (1)
-#   12 u32 flags (0)
-#   16 u64 model_offset
-#   24 u64 model_length
-#   32 u64 mapped_length (align_up(model_length, ALIGN))
-#   40 u64 reserved (pre-model size; elthur ignores it)
-#   48 32-byte digest (all zero = skip verification)
-#
-# The model is aligned to ALIGN (arm64 page size) so it stays mmap-able.
 append_model() {
   local MODEL="$1" EXE="$2"
-  local MAGIC="ELTHBLOB" VERSION=1 ALIGN=16384
+  local MAGIC="ELTHBLOB" VERSION=1 ALIGN=16384 # HACK: - Append a GGUF (plus ELTHBLOB trailer) tocompiled executable, synced code-wise with Elthur
   local size pad model_offset model_length mapped_length final
 
   size_of() {
@@ -224,7 +190,6 @@ append_model() {
     printf '%b' "$out"
   }
 
-  # --- append model + trailer -----------------------------------------------
   size="$(size_of "$EXE")"
   model_offset="$(align_up "$size" "$ALIGN")"
   model_length="$(size_of "$MODEL")"
@@ -251,11 +216,9 @@ append_model() {
 }
 
 [ -d "$TUI/node_modules" ] || ( cd "$TUI" && bun install )
-# bee-cli is a root-level submodule now, so its sources resolve their own deps
-# (date-fns, handlebars, qrcode, tweetnacl) from bee-cli/node_modules.
-[ -d "$BEE_CLI/node_modules" ] || ( cd "$BEE_CLI" && bun install )
+[ -d "$BEE_CLI/node_modules" ] || ( cd "$BEE_CLI" && bun install ) # FIXME Resolve Source deps in Bee-CLI submodule
 
-# Resolve the model: a positional file or --url wins, else family/params/quant.
+
 if [ "${#POSITIONAL[@]}" -eq 1 ]; then
   MODEL_PATH="${POSITIONAL[0]}"
 elif [ -n "$URL" ]; then
@@ -302,9 +265,6 @@ OUT="$TUI/dist/$NAME"
 echo "==> typecheck"
 ( cd "$TUI" && bun run typecheck )
 
-# Vendor pins: bake the sha of each dependency into the bundle for /status. No
-# network, no generated source file. elthur is usually latest main (see
-# ensure_dylib above), so this records exactly which revision a build used.
 BEE_SHA="$(git -C "$BEE_CLI" rev-parse HEAD)"
 echo "==> bee-cli: ${BEE_SHA:0:12}"
 ELTHUR_SHA="$(git -C "$ELTHUR" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -321,22 +281,14 @@ mkdir -p "$TUI/dist"
   --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\"" \
   --define "process.env.QUEEN_MODEL_FAMILY=\"$FAMILY\"" )
 
-# One file, validly signed. The code signature blob has to live inside the
-# __LINKEDIT segment, so we append the model + trailer and grow __LINKEDIT to
-# reach EOF, then sign with the signature landing in that segment; patchify also
-# relocates __LINKEDIT's vmaddr when the grown range would land in the dyld
-# shared cache (otherwise launch fails). This is a correctness fix, not a speed
-# one: the signature necessarily covers the model, so macOS pays its one-off
-# whole-file validation on first exec (the warm run below pays it at build time).
-# elthur finds the trailer just before the code signature on macOS.
 echo "==> de-sign"
-codesign --remove-signature "$OUT" 2>/dev/null || true
+codesign --remove-signature "$OUT" 2>/dev/null || true #HACK first remove binary signature to append model safely and resign
 
 echo "==> append model"
 append_model "$MODEL_PATH" "$OUT"
 
 echo "==> patch __LINKEDIT"
-bun "$TUI/patchification.ts" "$OUT"
+bun "$TUI/patchification.ts" "$OUT" #HACK Now the entire model is within the binary so we can sign it
 
 echo "==> sign"
 IDENTITY="${QUEEN_SIGN_IDENTITY:-}"
@@ -351,12 +303,9 @@ else
   codesign --force -s - "$OUT"
 fi
 
-# First exec of a freshly signed file pays a one-off, size-proportional macOS
-# verification. Do it here so the user's first launch is fast. Skip with
-# QUEEN_NO_WARM=1.
 if [ -z "${QUEEN_NO_WARM:-}" ]; then
   echo "==> warm (prime signature validation)"
-  QUEEN_WARM=1 "$OUT" >/dev/null 2>&1 || true
+  QUEEN_WARM=1 "$OUT" >/dev/null 2>&1 || true #FIXME First execution will be slow, since MacOS tries to validate the entire signed blob (including model)
 fi
 
 echo "built $OUT ($(du -h "$OUT" | cut -f1))"

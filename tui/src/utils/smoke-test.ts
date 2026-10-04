@@ -9,8 +9,8 @@
 // module (logged in or logged out are both fine — it must just load).
 
 import { chatGenerate, streamChatWithTools } from "./queen-ffi";
-import { createQueenAgent } from "./strands-model";
-import { TOOLS_JSON, runTool, stripToolMarkup } from "./tool-definitions";
+import { createQueenAgent } from "../functions/strands-model";
+import { TOOLS_JSON, runTool, stripToolMarkup } from "../functions/tool-definitions";
 import { getStatus, isNotLoggedIn, renderStatusMd } from "./bee";
 
 const DEFAULT_PROMPT = "What is the weather in Tokyo?";
