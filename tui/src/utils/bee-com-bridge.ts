@@ -11,7 +11,11 @@ import { clearPairingState, clearProxyConfig, clearToken, loadPairingState, load
 import { requestAppPairing } from "@/commands/auth/appPairingRequest";
 import { decryptAppPairingToken, generateAppPairingKeyPair, } from "@/utils/appPairingCrypto";
 import { renderQrCode } from "@/utils/qrCode";
-import { formatRecordMarkdown, resolveTimeZone, } from "@/utils/markdown";
+import { resolveTimeZone } from "@/utils/markdown";
+import { nowCommand } from "@/commands/now";
+import { changedCommand } from "@/commands/changed";
+import type { TableSpec } from "./dashboard-spec";
+import type { AnswerView, SearchResult, TranscriptLine } from "./answer-view";
 
 import type {
   LoginOptions,
@@ -22,6 +26,11 @@ import type {
 
 const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev"; //NOTE Pinned bee-cli submodule (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
 const ELTHUR_SHA = process.env.QUEEN_ELTHUR_SHA ?? "dev"; //NOTE elthur revision this build used (usually latest main); "dev" when run unbundled.
+
+// Queen keeps Bee credentials in ~/.bee/ only — never the macOS keychain — so we
+// never trigger a keychain access prompt. Defensive: preload sets this too, but
+// this guarantees file-only for anything importing the bridge directly.
+process.env.BEE_FORCE_FILE_STORE ??= "1";
 
 export class NotLoggedIn extends Error {
   constructor() {
@@ -48,6 +57,13 @@ export async function beeContext(env: Environment = "prod"): Promise<CommandCont
 
 export function dropBeeContext(): void {
   cached = null;
+}
+
+/** Cheap login probe: proxy mode, or a stored token for the environment. */
+export async function isLoggedIn(env: Environment = "prod"): Promise<boolean> {
+  const ctx = await beeContext(env);
+  if (ctx.client.isProxy) return true;
+  return Boolean(await loadToken(env));
 }
 
 export type StatusInfo = {
@@ -116,15 +132,216 @@ function maskToken(token: string): string {
   return t.length <= 8 ? "********" : `${t.slice(0, 4)}...${t.slice(-4)}`;
 }
 
-export async function getMe(env: Environment = "prod"): Promise<string> {
+export type CommandResult = { text: string; view?: AnswerView };
+
+type Rec = Record<string, unknown>;
+
+const META_KEYS = new Set(["next_cursor", "cursor", "timezone", "time_zone"]);
+
+// Drop id-ish columns and pagination/meta keys from tables.
+function isMetaKey(key: string): boolean {
+  const k = key.toLowerCase();
+  return META_KEYS.has(k) || k === "id" || k.endsWith("_id");
+}
+
+function isDateKey(key: string): boolean {
+  const k = key.toLowerCase();
+  return (
+    k === "date" ||
+    k === "at" ||
+    k === "since" ||
+    k === "until" ||
+    k === "from" ||
+    k === "to" ||
+    k.endsWith("_at") ||
+    k.endsWith("_time") ||
+    k.endsWith("_date")
+  );
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function ordinal(n: number): string {
+  const suffix = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${suffix[(v - 20) % 10] ?? suffix[v] ?? suffix[0]}`;
+}
+
+function startOfDay(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    if (value > 1e12) return value;
+    if (value > 1e9) return value * 1000;
+    return null;
+  }
+  if (typeof value === "string") {
+    if (/^\d+$/.test(value)) return toEpochMs(Number(value));
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+function calendarLabel(year: number, month: number, day: number, nowMs: number): string {
+  const now = new Date(nowMs);
+  if (year === now.getFullYear()) {
+    if (month === now.getMonth() && day === now.getDate()) return "today";
+    return `${ordinal(day)} ${MONTH_NAMES[month]}`;
+  }
+  if (year === now.getFullYear() - 1) return "last year";
+  return String(year);
+}
+
+/** Friendly relative/calendar date for table cells ("2 days ago", "20th August", "last year"). */
+export function humanDate(value: unknown, nowMs: number = Date.now()): string {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map(Number);
+    return calendarLabel(year ?? 0, (month ?? 1) - 1, day ?? 1, nowMs);
+  }
+  const ms = toEpochMs(value);
+  if (ms === null) return value === null || value === undefined ? "" : String(value);
+
+  const seconds = (nowMs - ms) / 1000;
+  if (seconds >= 0) {
+    if (seconds < 45) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+    const days = Math.floor((startOfDay(nowMs) - startOfDay(ms)) / 86_400_000);
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days} days ago`;
+    if (days < 14) return "last week";
+    if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+  }
+  const d = new Date(ms);
+  return calendarLabel(d.getFullYear(), d.getMonth(), d.getDate(), nowMs);
+}
+
+// Recursively drop null/undefined values (no more "- x: n/a").
+function prune(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(prune);
+  if (value && typeof value === "object") {
+    const out: Rec = {};
+    for (const [key, val] of Object.entries(value as Rec)) {
+      if (val === null || val === undefined) continue;
+      out[key] = prune(val);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Collapse whitespace into a single line; the table wraps it by column width.
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function cell(value: unknown, key: string, timeZone: string, nowMs: number): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (isDateKey(key) && (typeof value === "number" || typeof value === "string")) {
+    return oneLine(humanDate(value, nowMs));
+  }
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return oneLine(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "(none)";
+    return oneLine(value.map((item) => cell(item, key, timeZone, nowMs)).join(", "));
+  }
+  return oneLine(JSON.stringify(value));
+}
+
+function isObjectArray(value: unknown): value is Rec[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => item !== null && typeof item === "object" && !Array.isArray(item))
+  );
+}
+
+/**
+ * Turn a Bee payload into a table: the first list of objects becomes the rows
+ * (id/meta columns dropped), otherwise the record becomes a key/value table.
+ */
+export function buildTable(data: unknown): TableSpec | undefined {
+  const root = prune(data);
+  if (!root || typeof root !== "object" || Array.isArray(root)) return undefined;
+  const record = root as Rec;
+  const timeZone = resolveTimeZone(typeof record["timezone"] === "string" ? record["timezone"] : null);
+  const nowMs = Date.now();
+
+  for (const [key, value] of Object.entries(record)) {
+    if (isMetaKey(key) || !isObjectArray(value)) continue;
+    const items = value;
+    const colSet = new Set<string>();
+    for (const item of items) {
+      for (const k of Object.keys(item)) {
+        if (!isMetaKey(k)) colSet.add(k);
+      }
+    }
+    let columns = [...colSet];
+    if (columns.length === 0) continue;
+
+    // Drop duplicate/noise columns so the text columns get room to breathe.
+    const drop = new Set<string>();
+    if (columns.includes("summary") && columns.includes("short_summary")) drop.add("short_summary");
+    if (columns.includes("created_at") && columns.includes("updated_at")) drop.add("updated_at");
+    if (columns.includes("start_time") && columns.includes("end_time")) drop.add("end_time");
+    columns = columns.filter((col) => {
+      if (drop.has(col)) return false;
+      // Noise: "unknown"/empty/"(none)" in every row.
+      return items.some((item) => {
+        const text = cell(item[col], col, timeZone, nowMs).trim().toLowerCase();
+        return text !== "" && text !== "unknown" && text !== "(none)";
+      });
+    });
+    if (columns.length === 0) continue;
+
+    let rows = items.map((item) => columns.map((col) => cell(item[col], col, timeZone, nowMs)));
+
+    // Mixed feeds (e.g. activity) have sparse columns; keep only those present in
+    // at least half the rows so the table stays readable.
+    const keep = columns.map((_, i) =>
+      rows.reduce((n, row) => n + ((row[i] ?? "").trim().length > 0 ? 1 : 0), 0) >= Math.ceil(rows.length / 2),
+    );
+    if (keep.some(Boolean) && !keep.every(Boolean)) {
+      columns = columns.filter((_, i) => keep[i]);
+      rows = rows.map((row) => row.filter((_, i) => keep[i]));
+    }
+    return { title: key, columns, rows };
+  }
+
+  const entries = Object.entries(record).filter(([key]) => !isMetaKey(key));
+  if (entries.length === 0) return undefined;
+  return {
+    title: "details",
+    columns: ["field", "value"],
+    rows: entries.map(([key, value]) => [key, cell(value, key, timeZone, nowMs)]),
+  };
+}
+
+function tableResult(title: string, table: TableSpec | undefined): CommandResult {
+  if (!table) return { text: title };
+  const isFields = table.columns[0] === "field";
+  const n = table.rows.length;
+  const noun = isFields ? (n === 1 ? "field" : "fields") : n === 1 ? "row" : "rows";
+  return { text: `${title} · ${n} ${noun}`, view: { title, table: { ...table, title } } };
+}
+
+export async function getMe(env: Environment = "prod"): Promise<CommandResult> {
   const ctx = await beeContext(env);
   const data = await requestClientJson(ctx, "/v1/me", { method: "GET" });
-  return formatRecordMarkdown({
-    title: "Profile",
-    record: parseProfile(data),
-    timeZone: resolveTimeZone(parseTimezone(data)),
-    nowMs: Date.now(),
-  });
+  return tableResult("Profile", buildTable(parseProfile(data)));
 }
 
 function parseTimezone(value: unknown): string | null {
@@ -145,41 +362,229 @@ function parseProfile(payload: unknown): Record<string, unknown> {
   };
 }
 
-export async function searchBee(opts: SearchBeeOptions): Promise<string> {
+export async function searchBee(opts: SearchBeeOptions): Promise<CommandResult> {
   const ctx = await beeContext(opts.env ?? "prod");
   const data = await callBeeTextTool(ctx, "bee_search", { query: opts.query, limit: opts.limit ?? 5 });
-  return toolDataMd("Bee Search", data);
+  const results = parseSearchResults(data);
+  return {
+    text: `Bee Search · ${results.length} ${results.length === 1 ? "result" : "results"}`,
+    view: { title: `Search · ${opts.query}`, results },
+  };
 }
 
-function toolDataMd(title: string, data: unknown): string {
-  const record =
-    data && typeof data === "object" ? (data as Record<string, unknown>) : { value: data };
-  const tz = typeof record["timezone"] === "string" ? record["timezone"] : null;
-  return formatRecordMarkdown({ title, record, timeZone: resolveTimeZone(tz), nowMs: Date.now() });
+type RawSearchResult = {
+  id?: unknown;
+  type?: unknown;
+  score?: unknown;
+  title_snippet?: unknown;
+  snippet?: unknown;
+  summary?: unknown;
+  created_at?: unknown;
+};
+
+function parseSearchResults(data: unknown): SearchResult[] {
+  const root = data && typeof data === "object" ? (data as { results?: unknown }) : {};
+  const list = Array.isArray(root.results) ? root.results : [];
+  const nowMs = Date.now();
+  return list
+    .map((item): SearchResult | null => {
+      if (!item || typeof item !== "object") return null;
+      const r = item as RawSearchResult;
+      const title =
+        typeof r.title_snippet === "string"
+          ? r.title_snippet
+          : typeof r.summary === "string"
+            ? r.summary
+            : "";
+      return {
+        id: typeof r.id === "string" ? r.id : String(r.id ?? ""),
+        type: typeof r.type === "string" ? r.type : "result",
+        score: typeof r.score === "number" ? r.score : 0,
+        when: humanDate(r.created_at, nowMs),
+        title: oneLine(title.replace(/^#{1,6}\s+/, "")),
+        snippet: oneLine((typeof r.snippet === "string" ? r.snippet : "").replace(/^#{1,6}\s+/, "")),
+      };
+    })
+    .filter((result): result is SearchResult => result !== null);
 }
 
-export async function getTodayBrief(env: Environment = "prod"): Promise<string> {
+const DETAIL_TOOLS: Record<string, string> = {
+  fact: "bee_get_fact",
+  daily: "bee_get_daily_summary",
+  conversation: "bee_get_conversation",
+  insight: "bee_get_insight",
+  journal: "bee_get_voice_note",
+  voice_note: "bee_get_voice_note",
+};
+
+function unwrapRecord(data: unknown): Rec {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const record = data as Rec;
+  for (const value of Object.values(record)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Rec;
+    }
+  }
+  return record;
+}
+
+function textField(record: Rec, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "";
+}
+
+const NOISE = /^(unknown|n\/a|none|\(none\)|null|undefined)$/i;
+
+function isNoise(value: string): boolean {
+  return value.trim().length === 0 || NOISE.test(value.trim());
+}
+
+function detailMeta(record: Rec): { key: string; value: string }[] {
+  const items: { key: string; value: string }[] = [];
+  const push = (key: string, value: unknown) => {
+    if (value === null || value === undefined) return;
+    const text = String(value).trim();
+    if (isNoise(text)) return;
+    items.push({ key, value: text });
+  };
+  const when = record["created_at"] ?? record["start_time"] ?? record["date_time"] ?? record["date"];
+  if (when !== undefined) push("when", humanDate(when));
+  push("state", record["state"]);
+  push("device", record["device_type"]);
+  if (typeof record["confirmed"] === "boolean") push("confirmed", record["confirmed"] ? "yes" : "no");
+  if (Array.isArray(record["tags"]) && record["tags"].length > 0) push("tags", record["tags"].join(", "));
+  push("utterances", record["utterances_count"]);
+  return items;
+}
+
+function toMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  // Epoch ms passes through; seconds (epoch or audio offset) become ms.
+  return value > 1e12 ? value : value * 1000;
+}
+
+function transcriptLines(record: Rec): TranscriptLine[] {
+  const transcriptions = record["transcriptions"];
+  if (!Array.isArray(transcriptions)) return [];
+  const lines: TranscriptLine[] = [];
+  for (const item of transcriptions) {
+    if (!item || typeof item !== "object") continue;
+    const utterances = (item as Rec)["utterances"];
+    if (!Array.isArray(utterances)) continue;
+    for (const utterance of utterances) {
+      if (!utterance || typeof utterance !== "object") continue;
+      const u = utterance as Rec;
+      const raw = typeof u["speaker"] === "string" ? u["speaker"].trim() : "";
+      const speaker = raw.length > 0 && !isNoise(raw) ? raw : "Speaker";
+      const text = typeof u["text"] === "string" ? u["text"].trim() : "";
+      if (!text) continue;
+      const at = toMs(u["start"]) ?? toMs(u["spoken_at"]);
+      const end = toMs(u["end"]);
+      lines.push({
+        speaker,
+        text,
+        ...(at !== undefined ? { at } : {}),
+        ...(end !== undefined ? { end } : {}),
+      });
+    }
+  }
+  return lines;
+}
+
+/** Fetch the full entity behind a search hit for the drill-down view. */
+export async function getResultDetail(result: SearchResult): Promise<AnswerView> {
+  const tool = DETAIL_TOOLS[result.type.toLowerCase()];
+  if (!tool) throw new Error(`No detail view for ${result.type}`);
+  const ctx = await beeContext("prod");
+  const input: Record<string, unknown> = { id: result.id };
+  if (tool === "bee_get_conversation") input.includeTranscript = true;
+  const data = await callBeeTextTool(ctx, tool, input);
+  const record = unwrapRecord(data);
+  const body = textField(record, ["summary", "text", "short_summary"]).trim();
+  const transcript = transcriptLines(record);
+  return {
+    title: `${result.type} · ${result.id}`,
+    detail: {
+      meta: detailMeta(record),
+      ...(body ? { body } : {}),
+      ...(transcript.length > 0 ? { transcript } : {}),
+    },
+  };
+}
+
+export async function getTodayBrief(env: Environment = "prod"): Promise<CommandResult> {
   const ctx = await beeContext(env);
   const briefAction = todayResource.actions[1];
   if (!briefAction) throw new Error("today resource missing brief action");
   const result = await briefAction.run(ctx, { context: false });
   if (result.kind !== "json") throw new Error("unexpected today result");
-  const record =
-    result.data && typeof result.data === "object"
-      ? (result.data as Record<string, unknown>)
-      : { value: result.data };
-  return formatRecordMarkdown({
-    title: "Today Brief",
-    record,
-    timeZone: resolveTimeZone(parseTimezone(result.data)),
-    nowMs: Date.now(),
-  });
+  return tableResult("Today Brief", buildTable(result.data));
 }
 
-export async function getTodayContext(env: Environment = "prod"): Promise<string> {
+export async function getTodayContext(env: Environment = "prod"): Promise<CommandResult> {
   const ctx = await beeContext(env);
   const data = await callBeeTextTool(ctx, "bee_get_today", {});
-  return toolDataMd("Today", data);
+  return tableResult("Today", buildTable(data));
+}
+
+// Run a bee-cli command that prints to stdout and capture what it printed.
+async function captureConsole(fn: () => Promise<void>): Promise<string> {
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = original;
+  }
+  return lines.join("\n").trim();
+}
+
+// List-style Bee tools all share this shape: call the tool, tabulate the record.
+async function beeList(
+  env: Environment,
+  tool: string,
+  title: string,
+  input: Record<string, unknown> = {},
+): Promise<CommandResult> {
+  const ctx = await beeContext(env);
+  const data = await callBeeTextTool(ctx, tool, input);
+  return tableResult(title, buildTable(data));
+}
+
+export const getActivity = (env: Environment = "prod") =>
+  beeList(env, "bee_get_recent_activity", "Recent Activity");
+export const listConversations = (env: Environment = "prod") =>
+  beeList(env, "bee_list_conversations", "Conversations");
+export const listDailySummaries = (env: Environment = "prod") =>
+  beeList(env, "bee_list_daily_summaries", "Daily Summaries");
+export const listFacts = (env: Environment = "prod") =>
+  beeList(env, "bee_list_facts", "Facts");
+export const getInsights = (env: Environment = "prod") =>
+  beeList(env, "bee_get_insights", "Insights");
+export const listJournals = (env: Environment = "prod") =>
+  beeList(env, "bee_list_voice_notes", "Journals");
+export const getLocations = (env: Environment = "prod", current = false) =>
+  current
+    ? beeList(env, "bee_get_current_location", "Current Location")
+    : beeList(env, "bee_get_location_clusters", "Location Clusters");
+
+/** Recent conversations with utterances (runs the bee-cli `now` command). */
+export async function getNow(env: Environment = "prod"): Promise<string> {
+  const ctx = await beeContext(env);
+  return captureConsole(() => nowCommand.run([], ctx));
+}
+
+/** Recently changed entities (runs the bee-cli `changed` command). */
+export async function getChanged(env: Environment = "prod", cursor?: string): Promise<string> {
+  const ctx = await beeContext(env);
+  const args = cursor ? ["--cursor", cursor] : [];
+  return captureConsole(() => changedCommand.run(args, ctx));
 }
 
 export async function loginWithToken(opts: LoginOptions): Promise<string> {

@@ -124,3 +124,152 @@ export const padCell = (
   }
   return s + " ".repeat(diff);
 };
+
+// MARK: - display-width aware helpers (CJK/emoji count as 2 columns)
+
+/// Terminal display width of a string (Bun.stringWidth when available).
+export const displayWidth = (value: string): number => {
+  const s = String(value);
+  const sw = (globalThis as { Bun?: { stringWidth?: (s: string) => number } }).Bun
+    ?.stringWidth;
+  return typeof sw === "function" ? sw(s) : s.length;
+};
+
+/// Truncate to at most `width` display columns (never splits a wide glyph).
+export const truncateDisplay = (value: string, width: number): string => {
+  if (width <= 0) return "";
+  if (displayWidth(value) <= width) return value;
+  let out = "";
+  let w = 0;
+  for (const ch of value) {
+    const cw = displayWidth(ch);
+    if (w + cw > width) break;
+    out += ch;
+    w += cw;
+  }
+  return out;
+};
+
+/// Truncate with a trailing ellipsis that fits inside `width`.
+export const ellipsizeDisplay = (value: string, width: number): string => {
+  if (width <= 1) return "…";
+  if (displayWidth(value) <= width) return value;
+  return `${truncateDisplay(value, width - 1)}…`;
+};
+
+/// Pad/truncate a cell to `width` display columns with the given alignment.
+export const padDisplay = (
+  value: string,
+  width: number,
+  align: Align = "left",
+): string => {
+  const s = truncateDisplay(String(value), width);
+  const diff = width - displayWidth(s);
+  if (diff <= 0) return s;
+  if (align === "right") return " ".repeat(diff) + s;
+  if (align === "center") {
+    const left = Math.floor(diff / 2);
+    return " ".repeat(left) + s + " ".repeat(diff - left);
+  }
+  return s + " ".repeat(diff);
+};
+
+/// Word-wrap text into lines no wider than `width` display columns. Words wider
+/// than the column are hard-broken.
+export const wrapDisplay = (value: string, width: number): string[] => {
+  const clean = String(value).replace(/\s+/g, " ").trim();
+  if (width <= 0) return [""];
+  if (!clean) return [""];
+
+  const lines: string[] = [];
+  let current = "";
+  const flush = () => {
+    lines.push(current);
+    current = "";
+  };
+
+  for (const word of clean.split(" ")) {
+    let rest = word;
+    if (current !== "" && displayWidth(current) + 1 + displayWidth(rest) <= width) {
+      current = `${current} ${rest}`;
+      continue;
+    }
+    if (current !== "") flush();
+    while (displayWidth(rest) > width) {
+      const cut = truncateDisplay(rest, width);
+      if (cut === "") {
+        lines.push(ellipsizeDisplay(rest, width));
+        rest = "";
+        break;
+      }
+      lines.push(cut);
+      rest = rest.slice(cut.length);
+    }
+    current = rest;
+  }
+  if (current !== "") flush();
+  return lines.length ? lines : [""];
+};
+
+const TEXTY_WIDTH = 24;
+
+/// Allocate column widths that favor text columns: short columns get enough for
+/// their content/header, text columns share the remaining budget (weighted by
+/// their natural width). Falls back to even distribution when there's no text.
+export const allocateWidths = (
+  natural: number[],
+  total: number,
+  min = 4,
+): number[] => {
+  const n = natural.length;
+  if (n === 0) return [];
+  const budget = Math.max(n * min, Math.floor(total) - (3 * n + 1));
+  const texty = natural.map((w) => w >= TEXTY_WIDTH);
+  const widths = natural.map((w, i) =>
+    texty[i] ? Math.min(w, 16) : Math.max(min, w),
+  );
+  const sum = widths.reduce((a, b) => a + b, 0);
+
+  if (sum < budget) {
+    let extra = budget - sum;
+    const textIdx = natural.map((_, i) => i).filter((i) => texty[i]);
+    if (textIdx.length > 0) {
+      const weights = textIdx.map((i) => natural[i] ?? 1);
+      const wsum = weights.reduce((a, b) => a + b, 0) || 1;
+      let distributed = 0;
+      textIdx.forEach((idx, k) => {
+        const add = Math.floor((extra * (weights[k] ?? 1)) / wsum);
+        widths[idx] = (widths[idx] ?? min) + add;
+        distributed += add;
+      });
+      let rem = extra - distributed;
+      let i = 0;
+      while (rem > 0) {
+        const idx = textIdx[i % textIdx.length] ?? textIdx[0]!;
+        widths[idx] = (widths[idx] ?? min) + 1;
+        rem -= 1;
+        i += 1;
+      }
+    } else {
+      let i = 0;
+      while (extra > 0) {
+        widths[i % n] = (widths[i % n] ?? min) + 1;
+        extra -= 1;
+        i += 1;
+      }
+    }
+  } else if (sum > budget) {
+    let over = sum - budget;
+    while (over > 0) {
+      let widest = -1;
+      for (let i = 0; i < n; i += 1) {
+        const w = widths[i] ?? 0;
+        if (w > min && (widest === -1 || w > (widths[widest] ?? 0))) widest = i;
+      }
+      if (widest === -1) break;
+      widths[widest] = (widths[widest] ?? min) - 1;
+      over -= 1;
+    }
+  }
+  return widths;
+};

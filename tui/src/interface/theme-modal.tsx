@@ -7,8 +7,8 @@ import { useTheme, useThemeUpdater } from "../theme/use-theme";
 import { saveThemeName, themeByName, themes } from "../theme/themes";
 
 const DESCRIPTIONS: Record<string, string> = {
-  opencode: "dark · warm orange + purple",
-  default: "dark · violet + gray",
+  default: "dark · warm orange + purple",
+  purple: "dark · violet + gray",
   gruvbox: "dark · retro warm",
   nord: "dark · arctic blue",
   catppuccin: "dark · pastel mauve",

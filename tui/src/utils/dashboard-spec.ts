@@ -1,5 +1,8 @@
+import type { AlertVariant } from "../components/alert";
+import type { MultiProgressItem, MultiProgressStatus } from "../components/multi-progress";
 import type { Column } from "../components/table";
 import type { DitherColor, DitherVariant } from "../components/sparkline-utils";
+import { modelParams } from "../functions/model-params";
 
 export type Align = "left" | "right" | "center";
 
@@ -25,7 +28,7 @@ export type ChartSpec =
 
 export type StatItem = { key: string; value: string };
 
-export type SessionsSpec = {
+export type TableSpec = {
   title: string;
   columns: string[];
   aligns?: Align[];
@@ -33,18 +36,45 @@ export type SessionsSpec = {
   stats?: StatItem[];
 };
 
-export type DashboardSpec = { charts: ChartSpec[]; sessions: SessionsSpec };
+export type AlertSpec = {
+  variant: AlertVariant;
+  title: string;
+  message: string;
+  appendix: string;
+};
+
+/** Pre-turn alert: point logged-out users at /login; otherwise the default copy. */
+export function initialAlert(base: AlertSpec, loggedIn: boolean | null): AlertSpec {
+  if (loggedIn !== false) return base;
+  return { ...base, title: "Not Logged In", message: "Type /login to access your Bee Data" };
+}
+
+export type ContextSpec = {
+  items: MultiProgressItem[];
+};
+
+// TODO: wire this spec into the agent (render_dashboard) so chat can mutate the dashboard.
+export type DashboardSpec = {
+  charts: ChartSpec[];
+  /** Left-hand panel: per-session detail rows (dummy data for now). */
+  details: TableSpec;
+  table: TableSpec;
+  context: ContextSpec;
+  alert: AlertSpec;
+};
 
 export type Row = Record<string, unknown>;
 
 const CHART_TYPES = new Set(["bar", "sparkline", "gauge", "line", "pie", "heatmap"]);
 const ALIGNS = new Set<Align>(["left", "right", "center"]);
+const ALERT_VARIANTS = new Set<AlertVariant>(["success", "error", "warning", "info"]);
+const PROGRESS_STATUS = new Set<MultiProgressStatus>(["pending", "running", "done", "error"]);
 const DITHER_COLORS = new Set<DitherColor>(["green", "blue", "purple", "pink", "orange", "red", "grey"]);
 const DITHER_VARIANTS = new Set<DitherVariant>(["gradient", "dotted", "hatched", "solid"]);
 
 // MARK: - helpers for all kinds of logic
 
-export function tableColumns(spec: SessionsSpec): Column<Row>[] {
+export function tableColumns(spec: TableSpec): Column<Row>[] {
   return spec.columns.map((header, i) => ({
     key: header,
     header,
@@ -52,7 +82,7 @@ export function tableColumns(spec: SessionsSpec): Column<Row>[] {
   }));
 }
 
-export function tableRows(spec: SessionsSpec): Row[] {
+export function tableRows(spec: TableSpec): Row[] {
   return spec.rows.map((cells) =>
     Object.fromEntries(spec.columns.map((header, i) => [header, cells[i] ?? ""])),
   );
@@ -158,7 +188,7 @@ function normalizeChart(panel: unknown): ChartSpec | null {
   
 }
 
-function normalizeSessions(input: unknown): SessionsSpec {
+function normalizeTable(input: unknown): TableSpec {
   const o = isObject(input) ? input : {};
   const columns = (Array.isArray(o.columns) ? o.columns : []).map(toStr).filter((c) => c.length > 0);
   const rawAligns = Array.isArray(o.aligns) ? o.aligns : [];
@@ -183,7 +213,7 @@ function normalizeSessions(input: unknown): SessionsSpec {
     .filter((s): s is StatItem => s !== null);
 
   return {
-    title: toStr(o.title) || "sessions",
+    title: toStr(o.title) || "table",
     columns,
     ...(aligns.some((a) => a !== undefined) ? { aligns: aligns.map((a) => a ?? "left") } : {}),
     rows,
@@ -191,17 +221,61 @@ function normalizeSessions(input: unknown): SessionsSpec {
   };
 }
 
-const EMPTY: DashboardSpec = { charts: [], sessions: { title: "sessions", columns: [], rows: [] } };
+function normalizeAlert(input: unknown): AlertSpec {
+  const o = isObject(input) ? input : {};
+  const variant = toStr(o.variant) as AlertVariant;
+  return {
+    variant: ALERT_VARIANTS.has(variant) ? variant : "info",
+    title: toStr(o.title),
+    message: toStr(o.message),
+    appendix: toStr(o.appendix),
+  };
+}
+
+function normalizeContext(input: unknown): ContextSpec {
+  const o = isObject(input) ? input : {};
+  const items = (Array.isArray(o.items) ? o.items : [])
+    .map((item): MultiProgressItem | null => {
+      if (!isObject(item)) return null;
+      const total = toNum(item.total);
+      if (total === null) return null;
+      const label = toStr(item.label);
+      const status = toStr(item.status) as MultiProgressStatus;
+      return {
+        id: toStr(item.id) || label || "ctx",
+        label,
+        value: toNum(item.value) ?? 0,
+        total,
+        ...(PROGRESS_STATUS.has(status) ? { status } : {}),
+      };
+    })
+    .filter((item): item is MultiProgressItem => item !== null);
+  return { items };
+}
+
+const EMPTY: DashboardSpec = {
+  charts: [],
+  details: { title: "details", columns: [], rows: [] },
+  table: { title: "table", columns: [], rows: [] },
+  context: { items: [] },
+  alert: { variant: "info", title: "", message: "", appendix: "" },
+};
 
 export function normalizeDashboardSpec(input: unknown, fallback: DashboardSpec = EMPTY): DashboardSpec {
   const o = isObject(input) ? input : {};
   const charts = (Array.isArray(o.charts) ? o.charts : [])
     .map(normalizeChart)
     .filter((c): c is ChartSpec => c !== null);
-  const sessions = normalizeSessions(o.sessions);
+  const details = normalizeTable(o.details);
+  const table = normalizeTable(o.table);
+  const context = o.context !== undefined ? normalizeContext(o.context) : fallback.context;
+  const alert = o.alert !== undefined ? normalizeAlert(o.alert) : fallback.alert;
   return {
     charts: charts.length > 0 ? charts : fallback.charts,
-    sessions: sessions.columns.length > 0 ? sessions : fallback.sessions,
+    details: details.columns.length > 0 ? details : fallback.details,
+    table: table.columns.length > 0 ? table : fallback.table,
+    context,
+    alert,
   };
 }
 
@@ -211,6 +285,38 @@ const THROUGHPUT = [
   3, 5, 4, 8, 7, 6, 9, 12, 10, 14, 11, 13, 17, 15, 18, 16, 21, 19, 23, 20, 25, 22, 27, 24,
   26, 29, 28, 31, 30, 34, 33, 37, 35, 39, 38, 42, 40, 44, 43, 47,
 ];
+
+// Fields shared by every demo preset. Normalization copies them, so one object is safe.
+const SHARED_DEFAULTS = {
+  details: {
+    title: "details",
+    columns: ["key", "value"],
+    aligns: ["left", "left"],
+    rows: [
+      ["session", "ses_2f9a1c"],
+      ["user", "@bitan"],
+      ["started", "09:41:07"],
+      ["duration", "12m 24s"],
+      ["turns", 14],
+      ["tools", 6],
+      ["model", "qwen3.5-4b"],
+      ["quant", "q5_k_m"],
+      ["context", "18.4k / 32k"],
+      ["memory", "412 MB"],
+      ["region", "us-west-2"],
+      ["status", "active"],
+    ],
+  },
+  context: {
+    items: [{ id: "tokens", label: "tokens", value: 0, total: modelParams().contextWindow, status: "done" }],
+  },
+  alert: {
+    variant: "warning",
+    title: "Default Dashboard",
+    message: "Type a command or an area of interest in the input bar below to get insights from your Bee Data or Take Actions from it",
+    appendix: "Try asking 'hey, what are my most recent insights?'",
+  },
+};
 
 const RAW_DEFAULT: unknown = {
   charts: [
@@ -222,26 +328,29 @@ const RAW_DEFAULT: unknown = {
         { label: "tue", value: 48 },
         { label: "wed", value: 27 },
         { label: "thu", value: 61 },
+        { label: "fri", value: 55 },
+        { label: "sat", value: 12 },
+        { label: "sun", value: 23 },
       ],
     },
     {
       type: "sparkline",
       title: "throughput",
       data: THROUGHPUT,
-      label: "tok/s",
+      label: "history",
       color: "blue",
       variant: "gradient",
       markerIndex: THROUGHPUT.length - 1,
     },
     { type: "gauge", title: "saturation", value: 68, label: "vram" },
   ],
-  sessions: {
+  table: {
     title: "sessions",
     columns: ["model", "quant", "tok/s", "p50 ms", "ctx"],
     aligns: ["left", "center", "right", "right", "left"],
     rows: [
       ["qwen3.5-0.8b", "q6_k", 42, 118, "32k"],
-      ["lfm2.5-230m", "q8_0", 97, 41, "16k"],
+      ["lfm2.5-2.6b", "q5_k", 40, 121, "32k"],
       ["qwen3.5-4b", "q5_k", 19, 240, "128k"],
       ["falcon-h1-1b", "q8_0", 63, 77, "32k"],
       ["gemma4-2b", "q6_k", 28, 164, "64k"],
@@ -252,6 +361,7 @@ const RAW_DEFAULT: unknown = {
       { key: "updated", value: "just now" },
     ],
   },
+  ...SHARED_DEFAULTS,
 };
 
 const RAW_OPS: unknown = {
@@ -284,7 +394,7 @@ const RAW_OPS: unknown = {
       ],
     },
   ],
-  sessions: {
+  table: {
     title: "services",
     columns: ["service", "region", "p99 ms", "status"],
     aligns: ["left", "left", "right", "center"],
@@ -301,6 +411,7 @@ const RAW_OPS: unknown = {
       { key: "degraded", value: "1" },
     ],
   },
+  ...SHARED_DEFAULTS,
 };
 
 export const DEFAULT_DASHBOARD_SPEC = normalizeDashboardSpec(RAW_DEFAULT);

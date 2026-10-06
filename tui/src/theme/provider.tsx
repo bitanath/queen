@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/react */
 // Terminal theme provider (ported from termcn `opentui/theme-provider`).
 import { useEffect, useMemo, useState } from "react";
-import { defaultTheme } from "./theme-default";
+import { defaultTheme } from "./theme-purple";
 import { ThemeContext } from "./use-theme";
 import type {
   AutoThemeProviderProps,

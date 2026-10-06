@@ -5,23 +5,28 @@ import { createClipboard, createHostClipboard, createRendererClipboardAdapter } 
 import { HelpModal } from "./interface/help-modal";
 import { ThemeModal } from "./interface/theme-modal";
 import { CommandsModal } from "./interface/commands-modal";
+import { AnswerModal } from "./interface/answer-modal";
 import { StatusBar } from "./interface/status-bar";
 import { useToast } from "./interface/toaster";
 import { Modal } from "./components/modal";
 import { ToolApproval } from "./components/tool-approval";
 import { allowAlways, setApprovalHandler, type ApprovalRequest } from "./utils/approval-broker";
+import type { AnswerView } from "./utils/answer-view";
 
 type ModalKind = "theme" | "help" | "commands";
 
 type UiContextValue = {
   openModal: (modal: ModalKind) => void;
   closeModal: () => void;
+  /** Open the answer viewer (markdown for prose, table for command results). */
+  openAnswer: (view: AnswerView) => void;
   modalOpen: boolean;
 };
 
 const UiContext = createContext<UiContextValue>({
   openModal: () => {},
   closeModal: () => {},
+  openAnswer: () => {},
   modalOpen: false,
 });
 
@@ -41,6 +46,7 @@ function isCombo(key: { ctrl: boolean; name: string }, name: string): boolean {
 export function AppShell({ children }: { children: ReactNode }) {
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [answer, setAnswer] = useState<AnswerView | null>(null);
   const approvalResolver = useRef<((ok: boolean) => void) | null>(null);
   const renderer = useRenderer();
   const showToast = useToast();
@@ -111,7 +117,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const value: UiContextValue = {
     openModal: (next) => setModal(next),
     closeModal: () => setModal(null),
-    modalOpen: modal !== null || approval !== null,
+    openAnswer: (view) => setAnswer(view),
+    modalOpen: modal !== null || approval !== null || answer !== null,
   };
 
   return (
@@ -124,6 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {modal === "theme" && <ThemeModal onClose={() => setModal(null)} />}
         {modal === "help" && <HelpModal onClose={() => setModal(null)} />}
         {modal === "commands" && <CommandsModal onClose={() => setModal(null)} />}
+        {answer && <AnswerModal view={answer} onClose={() => setAnswer(null)} />}
         {approval && (
           <Modal title="tool approval" onClose={() => resolveApproval(false)}>
             <ToolApproval

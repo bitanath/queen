@@ -1,11 +1,21 @@
 import "./src/utils/preload-env-variables";
-import { render } from "./src/app";
-import { runSmoke, smokeRequested } from "./src/utils/smoke-test";
 
-if (process.env.QUEEN_WARM) {
-  // no-op: the exec itself is the warm-up.
-} else if (smokeRequested()) {
-  void runSmoke();
+if (process.env.QUEEN_ROLE === "bee-mcp") {
+  const [{ serveMcp }, { createCommandContext }] = await Promise.all([
+    import("@/mcp/server"),
+    import("@/context"),
+  ]);
+  await serveMcp(await createCommandContext("prod"));
 } else {
-  render();
+  const [{ render }, { runSmoke, smokeRequested }] = await Promise.all([
+    import("./src/app"),
+    import("./src/utils/smoke-test"),
+  ]);
+  if (process.env.QUEEN_WARM) {
+    // no-op: the exec itself is the warm-up.
+  } else if (smokeRequested()) {
+    void runSmoke();
+  } else {
+    render();
+  }
 }

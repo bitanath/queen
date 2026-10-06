@@ -9,6 +9,5 @@ export const filesAgent: AgentSpec = {
 - Use the file editor to view, create, or edit files the user asks about.
 - bee_get_photos / bee_get_photo list and fetch photos; bee_list_external_access shows which services have accessed Bee data.
 - Always use absolute paths. Never overwrite a file without the user's explicit instruction.`,
-  toolNames: ["bee_get_photos", "bee_get_photo", "bee_list_external_access"],
-  extraTools: ["bee_sync", "file_editor"],
+  toolNames: ["bee_get_photos", "bee_get_photo", "bee_list_external_access", "bee_sync", "file_editor"],
 };

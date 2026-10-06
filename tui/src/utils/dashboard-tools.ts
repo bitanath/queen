@@ -1,6 +1,7 @@
 // Agent-facing tool for the dashboard API surface. Created here but NOT wired
 // into the agent yet: attach `createDashboardTool(setSpec)` wherever the agent is
 // built, and/or add DASHBOARD_TOOL to the tools JSON.
+// TODO: register createDashboardTool(setSpec) on the agent so chat can mutate the dashboard.
 import { FunctionTool, type JSONSchema } from "@strands-agents/sdk";
 
 import { DEFAULT_DASHBOARD_SPEC, normalizeDashboardSpec, type DashboardSpec } from "./dashboard-spec";
@@ -10,7 +11,7 @@ export const DASHBOARD_TOOL = {
   function: {
     name: "render_dashboard",
     description:
-      "Update the dashboard's top chart row and sessions table. Chart types: bar, sparkline, gauge, line, pie, heatmap. Provide the sessions table as columns + rows.",
+      "Update the dashboard: top chart row, main table, status banner, context bars and alert banner. Chart types: bar, sparkline, gauge, line, pie, heatmap. Provide the table as columns + rows.",
     parameters: {
       type: "object",
       properties: {
@@ -30,7 +31,7 @@ export const DASHBOARD_TOOL = {
             required: ["type", "title"],
           },
         },
-        sessions: {
+        table: {
           type: "object",
           properties: {
             title: { type: "string" },
@@ -48,8 +49,36 @@ export const DASHBOARD_TOOL = {
           },
           required: ["columns", "rows"],
         },
+        context: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", description: "use 'tokens' for the live context bar" },
+                  label: { type: "string" },
+                  value: { type: "number" },
+                  total: { type: "number" },
+                  status: { type: "string", enum: ["pending", "running", "done", "error"] },
+                },
+                required: ["label", "value", "total"],
+              },
+            },
+          },
+        },
+        alert: {
+          type: "object",
+          properties: {
+            variant: { type: "string", enum: ["success", "error", "warning", "info"] },
+            title: { type: "string" },
+            message: { type: "string" },
+            appendix: { type: "string" },
+          },
+        },
       },
-      required: ["charts", "sessions"],
+      required: ["charts", "table"],
     },
   },
 };

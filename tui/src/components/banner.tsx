@@ -23,7 +23,7 @@ const ICONS: Record<BannerVariant, string> = {
 export interface BannerProps {
   children: ReactNode;
   variant?: BannerVariant;
-  icon?: string;
+  icon?: ReactNode;
   title?: string;
   dismissible?: boolean;
   onDismiss?: () => void;
@@ -75,18 +75,22 @@ export const Banner = ({
   const resolvedIcon = icon ?? ICONS[variant];
 
   return (
-    <box flexDirection="column">
+    <box flexDirection="column" flexShrink={0}>
       <box flexDirection="row" gap={gap}>
         <text fg={variantColor}>{accentChar}</text>
         <box flexDirection="column">
           <box flexDirection="row" gap={1}>
-            <text fg={variantColor}>{resolvedIcon}</text>
+            {typeof resolvedIcon === "string" ? (
+              <text fg={variantColor}>{resolvedIcon}</text>
+            ) : (
+              resolvedIcon
+            )}
             {title && (
-              <text fg={variantColor}>
+              <text fg={variantColor} wrapMode="none">
                 <b>{`${title}:`}</b>
               </text>
             )}
-            <text>{children}</text>
+            <text wrapMode="none" flexShrink={0}>{children}</text>
           </box>
           {dismissible && <text fg={theme.colors.mutedForeground}>press Esc to dismiss</text>}
         </box>

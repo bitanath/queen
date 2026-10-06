@@ -6,6 +6,8 @@ tui/dist/
 dist/
 out/
 *.tgz
+*.webarchive
+/*.md
 
 # staged thin dylib (copied from the elthur submodule at build time)
 tui/libelthur.dylib

@@ -4,27 +4,42 @@
 // libraries/.
 
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
+  getActivity,
+  getChanged,
+  getInsights,
+  getLocations,
   getMe,
+  getNow,
   getStatus,
   getTodayBrief,
   getTodayContext,
+  isLoggedIn,
   isNotLoggedIn,
+  listConversations,
+  listDailySummaries,
+  listFacts,
+  listJournals,
   loginWithToken,
   logout,
   pollPairing,
   renderStatusMd,
   searchBee,
   startPairing,
+  type CommandResult,
 } from "../utils/bee-com-bridge";
-import { EngineCancelled, streamFallback } from "../utils/queen-ffi";
+import type { AnswerView } from "../utils/answer-view";
+import { EngineCancelled, OFFLINE_NOTICE, streamFallback } from "../utils/queen-ffi";
+import { lastThink, stripThinking } from "../utils/stream-status";
 import { ElthurModel } from "../functions/strands-model";
-import { agentModels, createQueenAgent } from "../functions/tools-execution";
+import { agentModels, createQueenAgent, type SpecialistEvent } from "../functions/tools-execution";
 import { AGENT_SPECS } from "../functions/agents";
 import { stripToolMarkup } from "../functions/tool-definitions";
+import { modelAvailable } from "../functions/model-params";
 import { useUi } from "../userinterface";
+import { useMcp } from "../mcproviders";
 import type { ToolCallStatus } from "../components/tool-call";
 
 export type Role = "user" | "queen" | "error" | "system";
@@ -41,13 +56,33 @@ export type ToolCallView = {
 
 export type ChatMessage = { id: number; role: Role; text: string; tools?: ToolCallView[] };
 
+// Banner status for the current turn. Kept in the engine because it depends on
+// event ordering (thinking vs tool result) that only the stream loop sees.
+export type ChatPhase =
+  | { kind: "idle" }
+  | { kind: "thinking" }
+  | { kind: "tool"; tool: string }
+  | { kind: "working"; label: string; detail: string }
+  | { kind: "done" };
+
 export type ChatController = {
   msgs: ChatMessage[];
   streamingId: number | null;
   busy: boolean;
+  phase: ChatPhase;
+  ready: boolean;
+  loggedIn: boolean | null;
   send: (line: string) => Promise<void>;
   cancel: () => void;
   context: { used: number; active: string | null; activeUsed: number };
+  /** Live feed from the active specialist subagent (thinking + current tool). */
+  specialist: { name: string | null; tool: string | null; text: string; visible: boolean };
+  /** The final answer of the last turn (whitespace preserved for markdown). */
+  finalAnswer: string;
+  /** Structured answer view for the last turn, when it was a command result. */
+  answerView: AnswerView | null;
+  /** Increments once per completed answer, so the UI can react to new ones. */
+  answerSeq: number;
 };
 
 const AGENT_NAMES = new Set(AGENT_SPECS.map((spec) => spec.name));
@@ -65,38 +100,91 @@ function toolResultText(content: readonly { type: string; text?: string; json?: 
     .join("\n");
 }
 
-// MARK: - Chat engine. Owns the Strands agent, conversation, streaming and command
-// handling. Kept separate from the view so the input can live elsewhere (the
-// full-width text area below the dashboard columns).
+// MARK: - Chat engine. Owns the Strands agent, conversation, streaming and command handling.
 export function useChat(): ChatController {
   const renderer = useRenderer();
   const ui = useUi();
   const [msgs, setMsgs] = useState<ChatMessage[]>([
-    { id: 0, role: "system", text: "Welcome to queen. Type /help for commands, /login to connect Bee." },
+    {
+      id: 0,
+      role: "system",
+      text: modelAvailable()
+        ? "Welcome to queen. Type /help for commands, /login to connect Bee."
+        : "Welcome to queen-lite. Commands only (no model) — type /help to see them.",
+    },
   ]);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<ChatPhase>({ kind: "idle" });
   const [streamingId, setStreamingId] = useState<number | null>(null);
   const [context, setContext] = useState<{ used: number; active: string | null; activeUsed: number }>({
     used: 0,
     active: null,
     activeUsed: 0,
   });
+  // Live specialist (subagent) feed, surfaced in the dashboard while it runs.
+  const [specialist, setSpecialist] = useState<{
+    name: string | null;
+    tool: string | null;
+    text: string;
+    visible: boolean;
+  }>({ name: null, tool: null, text: "", visible: false });
+
+  const handleSpecialist = (event: SpecialistEvent) => {
+    setSpecialist((s) => {
+      if (event.kind === "tool") return { ...s, name: event.agent, tool: event.tool, visible: true };
+      const text = s.name === event.agent ? s.text + event.text : event.text;
+      return { ...s, name: event.agent, text, visible: true };
+    });
+  };
+
+  // Final answer of the last turn: thinking + tool markup stripped, whitespace
+  // preserved so it can be rendered as markdown in the answer modal.
+  const [finalAnswer, setFinalAnswer] = useState("");
+  const [answerView, setAnswerView] = useState<AnswerView | null>(null);
+  const [answerSeq, setAnswerSeq] = useState(0);
+  const toAnswer = (raw: string) => stripToolMarkup(stripThinking(raw)).trim();
+  // `null` = not yet probed, so a logged-in boot doesn't flash "Not Logged In".
+  const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const idRef = useRef(1);
   const cancelRef = useRef(false);
   const pendingInterruptsRef = useRef<{ id: string; reason?: unknown }[] | null>(null);
 
-  // MARK: - One Strands agent per chat pane: owns conversation memory and tool loop. Model instance is kept alongside so we can read truncation state.
+  // MARK: - One Strands agent per chat pane. Built once the Bee MCP server has
+  // loaded its tools so the registry-backed agents receive them.
+  const mcp = useMcp();
+  const [ready, setReady] = useState(false);
   const modelRef = useRef<ElthurModel | null>(null);
   const agentRef = useRef<ReturnType<typeof createQueenAgent> | null>(null);
-  if (agentRef.current === null) {
+  useEffect(() => {
+    if (agentRef.current !== null || !mcp.ready) return;
+    if (!modelAvailable()) {
+      // queen-lite: no GGUF baked in, so never build an agent or touch inference.
+      setReady(true);
+      return;
+    }
     const model = new ElthurModel();
     modelRef.current = model;
-    agentRef.current = createQueenAgent(model);
-  }
+    // TODO: agent.toolRegistry.add(createDashboardTool(...)) once the dashboard is agent-driven.
+    agentRef.current = createQueenAgent(model, handleSpecialist);
+    setReady(true);
+  }, [mcp.ready]);
 
-  const push = (role: Role, text: string) => {
+  // Probe Bee login once on mount so the dashboard can point logged-out users at /login.
+  useEffect(() => {
+    isLoggedIn()
+      .then((yes) => setLoggedIn(yes))
+      .catch(() => setLoggedIn(false));
+  }, []);
+
+  const push = (role: Role, text: string, view: AnswerView | null = null) => {
     const id = idRef.current++;
     setMsgs((m) => [...m, { id, role, text }]);
+    // Command replies (e.g. /me, /today) are finished answers too.
+    if (role === "queen" && text.trim()) {
+      setFinalAnswer(toAnswer(text));
+      setAnswerView(view);
+      setAnswerSeq((n) => n + 1);
+    }
   };
 
   // FIXME Streaming queen reply: placeholder first, then live text updates.
@@ -139,6 +227,10 @@ export function useChat(): ChatController {
     const segments: string[] = [];
     const tools: ToolCallView[] = [];
     let live = "";
+    let ok = true; // false when the turn errored or was cancelled (no final answer)
+    // Text length at the last tool result: any think block after this point is
+    // "fresh" and releases the Tool-call hold.
+    let thinkMark = 0;
     const render = () => updateMsg(id, [...segments, live].filter((s) => s.trim().length > 0).join("\n\n"));
     try {
       // MARK: - One turn agentic loop let's goo
@@ -152,20 +244,36 @@ export function useChat(): ChatController {
         const event = step.value;
         if (event.type === "beforeToolCallEvent") {
           const name = event.toolUse.name;
+          const args = (event.toolUse.input ?? {}) as Record<string, unknown>;
           tools.push({
             id: event.toolUse.toolUseId,
             name,
-            args: (event.toolUse.input ?? {}) as Record<string, unknown>,
+            args,
             status: "running",
             startedAt: Date.now(),
           });
-          if (AGENT_NAMES.has(name)) setContext((c) => ({ ...c, active: name }));
+          // The orchestrator routes via a single "route" tool; surface the chosen specialist.
+          const specialist = name === "route" ? String(args.specialist ?? "") : name;
+          if (AGENT_NAMES.has(specialist)) {
+            setContext((c) => ({ ...c, active: specialist }));
+            setSpecialist({ name: specialist, tool: null, text: "", visible: true });
+          }
           updateTools(id, tools);
+          setPhase({ kind: "tool", tool: AGENT_NAMES.has(specialist) ? specialist : name });
         } else if (event.type === "modelStreamUpdateEvent") {
           const e = event.event;
           if (e.type === "modelContentBlockDeltaEvent" && e.delta.type === "textDelta") {
             live += e.delta.text;
+            // Fresh thinking (after the last tool result) takes over the banner.
+            if (lastThink(live.slice(thinkMark)) !== null) {
+              setPhase((p) => (p.kind === "thinking" ? p : { kind: "thinking" }));
+            }
             render();
+            // Once the orchestrator starts writing, the specialist's result is done.
+            setSpecialist((s) => (s.visible && s.text.trim().length > 0 ? { ...s, visible: false } : s));
+          } else if (e.type === "modelMessageStartEvent") {
+            // Context grows per model call (phase); reflect it as it happens.
+            setContext((c) => ({ ...c, used: model.lastContextUsed }));
           }
         } else if (event.type === "toolResultEvent") {
           const r = event.result;
@@ -175,12 +283,18 @@ export function useChat(): ChatController {
             call.result = toolResultText(r.content);
             call.duration = Date.now() - call.startedAt;
           }
-          if (call && AGENT_NAMES.has(call.name)) {
-            const sub = agentModels.get(call.name);
+          const subName = call
+            ? call.name === "route"
+              ? String((call.args as Record<string, unknown>).specialist ?? "")
+              : call.name
+            : "";
+          if (call && AGENT_NAMES.has(subName)) {
+            const sub = agentModels.get(subName);
             setContext((c) => ({ ...c, active: null, activeUsed: sub?.lastContextUsed ?? 0 }));
           }
           const md = toolResultText(r.content);
           if (md.trim().length > 0) segments.push(md);
+          thinkMark = live.length;
           updateTools(id, tools);
           render();
         }
@@ -201,12 +315,14 @@ export function useChat(): ChatController {
         }
         updateTools(id, tools);
         render();
+        ok = false; // mid-agent pause: not a final answer
         return;
       }
       if (model.lastTruncated) {
         push("system", `…response stopped at the ${model.lastMaxTokens}-token limit — ask me to continue.`);
       }
       if (result.stopReason === "cancelled" || model.lastStopReason === "cancelled") {
+        ok = false;
         updateMsg(id, `${stripToolMarkup([...segments, live].join("\n\n"))} …cancelled`);
         return;
       }
@@ -214,22 +330,46 @@ export function useChat(): ChatController {
         updateMsg(id, "(no response)");
       }
     } catch (e) {
+      ok = false;
       if (e instanceof EngineCancelled) {
         updateMsg(id, `${stripToolMarkup([...segments, live].join("\n\n"))} …cancelled`);
       } else {
         updateMsg(id, `error: ${e instanceof Error ? e.message : String(e)}`);
       }
     } finally {
+      // Final answer only: the orchestrator's output after the last tool (its
+      // whole output when there was no tool), never the specialist/tool text.
+      if (ok) {
+        const answer = toAnswer(live.slice(thinkMark)) || toAnswer(live);
+        if (answer) {
+          setFinalAnswer(answer);
+          setAnswerView(null);
+          setAnswerSeq((n) => n + 1);
+        }
+      }
       setStreamingId((cur) => (cur === id ? null : cur));
     }
   };
 
-  const withFallback = async (attempted: string, detail: string, fn: () => Promise<string>) => {
+  const withFallback = async (
+    attempted: string,
+    detail: string,
+    fn: () => Promise<string | CommandResult>,
+  ) => {
     try {
-      push("queen", await fn());
+      setPhase({ kind: "working", label: "Querying bee cli", detail: attempted });
+      const out = await fn();
+      if (typeof out === "string") push("queen", out);
+      else push("queen", out.text, out.view ?? null);
     } catch (e) {
       if (isNotLoggedIn(e)) {
+        if (!modelAvailable()) {
+          // queen-lite: no local model to soften the message, so use the static notice.
+          push("queen", OFFLINE_NOTICE);
+          return;
+        }
         const id = pushStreaming();
+        setPhase({ kind: "thinking" });
         try {
           const res = await streamFallback({
             attempted,
@@ -257,7 +397,8 @@ export function useChat(): ChatController {
     const arg = rest.join(" ");
     switch (cmd) {
       case "help":
-        ui.openModal("help");
+      case "commands":
+        ui.openModal("commands");
         return;
       case "theme":
         ui.openModal("theme");
@@ -273,6 +414,39 @@ export function useChat(): ChatController {
       case "me":
         await withFallback("/me", "They asked to see their Bee profile.", () => getMe());
         return;
+      case "activity":
+        await withFallback("/activity", "They asked for their recent Bee activity.", () => getActivity());
+        return;
+      case "now":
+        await withFallback("/now", "They asked for recent conversations with utterances.", () => getNow());
+        return;
+      case "changed":
+        await withFallback("/changed", "They asked what changed recently in Bee.", () => getChanged());
+        return;
+      case "conversations":
+        await withFallback("/conversations", "They asked to list their conversations.", () => listConversations());
+        return;
+      case "daily":
+        await withFallback("/daily", "They asked to list their daily summaries.", () => listDailySummaries());
+        return;
+      case "facts":
+        await withFallback("/facts", "They asked to list their saved facts.", () => listFacts());
+        return;
+      case "insights":
+        await withFallback("/insights", "They asked to list Bee insights.", () => getInsights());
+        return;
+      case "journals":
+        await withFallback("/journals", "They asked to list their journals.", () => listJournals());
+        return;
+      case "locations": {
+        const current = rest.includes("--current");
+        await withFallback(
+          "/locations",
+          current ? "They asked for their current location." : "They asked for their location clusters.",
+          () => getLocations("prod", current),
+        );
+        return;
+      }
       case "today": {
         const context = rest.includes("--context");
         await withFallback(
@@ -302,6 +476,7 @@ export function useChat(): ChatController {
           }
           try {
             const name = await loginWithToken({ token });
+            setLoggedIn(true);
             push("queen", `Connected to Bee as ${name}.`);
           } catch (e) {
             push("error", `error: ${e instanceof Error ? e.message : String(e)}`);
@@ -319,10 +494,12 @@ export function useChat(): ChatController {
           );
           cancelRef.current = false;
           const out = await pollPairing({ isCancelled: () => cancelRef.current });
+          setLoggedIn(true);
           push("queen", `Connected to Bee as ${out.name}.`);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (msg === "ALREADY_PAIRED") {
+            setLoggedIn(true);
             push("queen", "Already paired — you're connected.");
           } else {
             push("error", `error: ${msg}`);
@@ -332,6 +509,7 @@ export function useChat(): ChatController {
       }
       case "logout":
         await logout();
+        setLoggedIn(false);
         push("system", "Logged out.");
         return;
       default:
@@ -341,21 +519,40 @@ export function useChat(): ChatController {
 
   const send = async (line: string) => {
     const text = line.trim();
-    if (!text || busy) return;
+    if (!text || busy || !ready) return;
     cancelRef.current = false;
     push("user", text);
     setBusy(true);
+    setPhase({ kind: "idle" });
+    setSpecialist({ name: null, tool: null, text: "", visible: false });
     try {
       if (text.startsWith("/")) await runCommand(text);
-      else {
+      else if (!modelAvailable()) {
+        push("error", "error: this build has no model (queen-lite) — commands only. Try /help.");
+      } else {
         const pending = pendingInterruptsRef.current ?? undefined;
         pendingInterruptsRef.current = null;
         await streamAgent(text, pending);
       }
     } finally {
       setBusy(false);
+      setPhase({ kind: "done" });
     }
   };
 
-  return { msgs, streamingId, busy, send, cancel, context };
+  return {
+    msgs,
+    streamingId,
+    busy,
+    phase,
+    ready,
+    loggedIn,
+    send,
+    cancel,
+    context,
+    specialist,
+    finalAnswer,
+    answerView,
+    answerSeq,
+  };
 }

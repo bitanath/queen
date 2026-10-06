@@ -1,15 +1,33 @@
 import { generate } from "./queen-ffi";
 import { createQueenAgent } from "../functions/tools-execution";
-import { stripToolMarkup, weatherTool } from "../functions/tool-definitions";
+import { stripToolMarkup, webFetch } from "../functions/tool-definitions";
 import { getStatus, isNotLoggedIn, renderStatusMd } from "./bee-com-bridge";
+import { getBeeMcpState, invokeBeeTool, startBeeMcp, stopBeeMcp } from "../libraries/bee-mcp";
+import { modelAvailable } from "../functions/model-params";
 
-const DEFAULT_PROMPT = "What is the weather in Tokyo?"; //TODO just a random prompt to test a random tool call
+// FIXME Runtime: the full smoke takes ~60s. The "agent" check is ~37s and  "generic chat" ~15s (local model generation)
+const DEFAULT_PROMPT = "What is the weather in Tokyo?"; 
 
-type Check = { name: string; run: (prompt: string) => Promise<string> | string };
+type Check = { name: string; needsModel?: boolean; run: (prompt: string) => Promise<string> | string };
 
 const checks: Check[] = [
   {
+    name: "mcp",
+    run: async () => {
+      await startBeeMcp();
+      const state = getBeeMcpState();
+      if (state.status !== "connected") {
+        throw new Error(`mcp ${state.status}${state.error ? `: ${state.error}` : ""}`);
+      }
+      if (state.toolCount === 0) throw new Error("mcp connected but exposed no tools");
+      // Round-trip one real tool call to prove spawn -> list -> call works.
+      const res = await invokeBeeTool("bee_status");
+      return `${state.toolCount} tools; bee_status -> ${JSON.stringify(res).slice(0, 80)}`;
+    },
+  },
+  {
     name: "generic chat",
+    needsModel: true,
     run: (prompt) => {
       const text = stripToolMarkup(generate({ prompt })).trim();
       if (text.length === 0) throw new Error("empty response");
@@ -18,8 +36,9 @@ const checks: Check[] = [
   },
   {
     name: "agent",
+    needsModel: true,
     run: async (prompt) => {
-      const agent = createQueenAgent();
+      const agent = createQueenAgent(); //TODO just a random prompt to test a random tool call
       const result = await agent.invoke(prompt);
       const stop = result.stopReason;
       if (stop === "cancelled") throw new Error("agent turn cancelled");
@@ -28,11 +47,11 @@ const checks: Check[] = [
   },
   {
     name: "tool",
-    run: async (prompt) => {
-      const city = /weather in ([A-Za-z .'-]+)/i.exec(prompt)?.[1]?.trim() || "Tokyo";
-      const out = String(await weatherTool.invoke({ city }));
-      if (out.trim().length === 0) throw new Error("get_weather returned nothing");
-      return `get_weather(${city}) → ${out.trim().split("\n")[0]?.slice(0, 60) ?? ""}`;
+    run: async () => {
+      const url = "https://wttr.in/Tokyo?format=3";
+      const out = String(await webFetch.invoke({ url }));
+      if (out.trim().length === 0) throw new Error("web_fetch returned nothing");
+      return `web_fetch(${url}) → ${out.trim().split("\n")[0]?.slice(0, 60) ?? ""}`;
     },
   },
   {
@@ -59,8 +78,14 @@ export async function runSmoke(): Promise<void> {
   console.log(`QUEEN_SMOKE prompt: ${JSON.stringify(prompt)}`);
 
   let failed = 0;
+  let skipped = 0;
   for (const check of checks) {
     const started = Date.now();
+    if (check.needsModel && !modelAvailable()) {
+      skipped++;
+      console.log(`  SKIP  ${check.name.padEnd(13)} (no model in this build)`);
+      continue;
+    }
     try {
       const detail = await check.run(prompt);
       console.log(`  PASS  ${check.name.padEnd(13)} (${Date.now() - started}ms)  ${detail}`);
@@ -70,7 +95,10 @@ export async function runSmoke(): Promise<void> {
     }
   }
 
-  const passed = checks.length - failed;
-  console.log(`QUEEN_SMOKE: ${passed}/${checks.length} passed`);
+  await stopBeeMcp(); // kill the spawned server so the process can exit
+
+  const passed = checks.length - failed - skipped;
+  const tail = skipped > 0 ? `, ${skipped} skipped` : "";
+  console.log(`QUEEN_SMOKE: ${passed}/${checks.length} passed${tail}`);
   if (failed > 0) process.exitCode = 1;
 }

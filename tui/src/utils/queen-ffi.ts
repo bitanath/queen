@@ -51,6 +51,12 @@ export const CHAT_MAX_TOKENS = 1024;
 export const FALLBACK_MAX_TOKENS = 512;
 const DEFAULT_GENERATE_MAX_TOKENS = 256;
 
+/** Static logged-out reply, used when no local model is available to rewrite it. */
+export const OFFLINE_NOTICE =
+  "You're logged out of Bee, so I can't pull live data right now. " +
+  "Run /login in this chat to connect your account, and I'll fetch it live. " +
+  "Meanwhile, ask me anything and I'll help from general knowledge.";
+
 
 const enc = new TextEncoder();
 
@@ -201,10 +207,7 @@ export async function streamFallback(opts: FallbackOptions): Promise<StreamResul
     });
   } catch (e) {
     if (e instanceof EngineCancelled) throw e;
-    const text =
-      "You're logged out of Bee, so I can't pull live data right now. " +
-      "Run /login in this chat to connect your account, and I'll fetch it live. " +
-      "Meanwhile, ask me anything and I'll help from general knowledge.";
+    const text = OFFLINE_NOTICE;
     opts.onChunk(text);
     return { text, truncated: false, maxTokens: FALLBACK_MAX_TOKENS };
   }

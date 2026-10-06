@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { defaultTheme } from "./theme-default";
-import { classicTheme } from "./theme-classic";
+import { defaultTheme } from "./theme-purple";
+import { classicTheme } from "./theme-default";
 import { gruvboxTheme } from "./theme-gruvbox";
 import { nordTheme } from "./theme-nord";
 import { catppuccinTheme } from "./theme-catppuccin";

@@ -1,15 +1,38 @@
 import { TextAttributes } from "@opentui/core";
 import { useEffect, useState } from "react";
+import { useTheme } from "../theme/use-theme";
 
-const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNERS = {
+  dots: { interval: 80, frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] },
+  earth: { interval: 180, frames: ["🌍 ", "🌎 ", "🌏 "] },
+} as const;
 
-/// Small indeterminate spinner + label. Ticks on an interval, so it animates
-/// whenever the main thread is free (Bee fetch, GGUF streaming polls).
-export function Spinner({ label }: { label: string }) {
+export type SpinnerType = keyof typeof SPINNERS;
+
+/// Small indeterminate spinner + optional label. Ticks on an interval, so it
+/// animates whenever the main thread is free (Bee fetch, GGUF streaming polls).
+export function Spinner({
+  type = "dots",
+  label,
+  color,
+}: {
+  type?: SpinnerType;
+  label?: string;
+  color?: string;
+}) {
+  const theme = useTheme();
+  const { interval, frames } = SPINNERS[type];
   const [i, setI] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setI((v) => (v + 1) % FRAMES.length), 80);
+    setI(0);
+    const t = setInterval(() => setI((v) => (v + 1) % frames.length), interval);
     return () => clearInterval(t);
-  }, []);
-  return <text attributes={TextAttributes.DIM}>{`${FRAMES[i] ?? "⠋"} ${label}`}</text>;
+  }, [frames, interval]);
+  const glyph = frames[i] ?? frames[0] ?? "";
+  const resolvedColor = color ?? theme.colors.mutedForeground;
+  return (
+    <text fg={resolvedColor} attributes={color ? undefined : TextAttributes.DIM}>
+      {label ? `${glyph} ${label}` : glyph}
+    </text>
+  );
 }

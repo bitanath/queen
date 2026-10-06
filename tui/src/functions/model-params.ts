@@ -1,16 +1,11 @@
 export const CHAT_SYSTEM_HIGH = `
-You are Queen, a friendly assistant inside a chat app.
-The user may or may not be logged in to Bee; if they ask for live personal data you don't have, briefly suggest the /search or /today commands.
-Otherwise just help directly from general knowledge.
-Write in plain sentences, no code formatting. Keep it under 150 words.
+You are Queen, a friendly assistant in a chat app. Help from general knowledge; if asked for live personal data you don't have, briefly suggest /search or /today. Plain sentences, no code formatting, under 150 words.
 `.trim();
 
-export const CHAT_SYSTEM_LOW = `
-You are Queen, a friendly assistant inside a chat app.
-The user may or may not be logged in to Bee; if they ask for live personal data you don't have, briefly suggest the /search or /today commands.
-Otherwise just help directly from general knowledge.
-Write in plain sentences, no code formatting.
-Only call a tool when the request actually needs live or external data; otherwise reply naturally and conversationally.
+export const ORCHESTRATOR_PROMPT = `
+You are Queen. For anything about the user's own data or the web/shell, call route with the right specialist:
+conversation (said/heard/did, today, transcripts, summaries), facts (saved facts), insights (patterns, and the user's profile via bee_me), journals (voice notes and locations), todos, files (sync, edit, photos), external (web, APIs, weather, shell), misc (anything unclear or unmatched; it only calls a matching tool or refuses).
+Otherwise answer directly in plain sentences, no code formatting, under 150 words, only in English no other language.
 `.trim();
 
 export type ModelParams = {
@@ -51,23 +46,13 @@ const BY_FAMILY: Record<string, ModelParams> = {
     contextWindow: CONTEXT_WINDOW,
     windowSize: 40, // no proactive compression for the larger model
   },
-  "minicpm5": {
-    temperature: 0.3,
-    topP: 0.9,
-    topK: 40,
-    systemPrompt: CHAT_SYSTEM_HIGH,
-    contextWindow: CONTEXT_WINDOW,
-    windowSize: 12,
-    compressionThreshold: 0.5, // clear aggressively for the small model
-  },
   "lfm2.5": {
     temperature: 0.1,
     topP: 0.9,
     topK: 50,
-    systemPrompt: CHAT_SYSTEM_LOW,
+    systemPrompt: CHAT_SYSTEM_HIGH,
     contextWindow: CONTEXT_WINDOW,
-    windowSize: 12,
-    compressionThreshold: 0.5,
+    windowSize: 40,
   },
 };
 
@@ -76,4 +61,16 @@ export function modelParams(
 ): ModelParams {
   if (!family) return DEFAULTS;
   return BY_FAMILY[family] ?? DEFAULTS;
+}
+
+/**
+ * True for the `queen-lite` artifact: no GGUF is appended and inference is
+ * never initialized. Injected at build time by build.sh via
+ * `--define process.env.QUEEN_NO_MODEL="1"`.
+ */
+export const MODEL_DISABLED = process.env.QUEEN_NO_MODEL === "1";
+
+/** Whether local model inference is available in this build. */
+export function modelAvailable(): boolean {
+  return !MODEL_DISABLED;
 }

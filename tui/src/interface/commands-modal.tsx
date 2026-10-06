@@ -14,7 +14,7 @@ export function CommandsModal({ onClose }: { onClose: () => void }) {
       height={Math.max(COMMANDS.length * 2 + 8, 20)}
       onClose={onClose}
     >
-      <text fg={theme.colors.mutedForeground}>Arrows to scroll · enter or esc closes</text>
+      <text fg={theme.colors.mutedForeground}>↑↓ scroll · ↵ select</text>
       <box flexGrow={1} minHeight={0} marginTop={1}>
         <select
           focused

@@ -5,71 +5,25 @@ import { handoffToUser } from "@strands-agents/sdk/vended-tools/handoff-to-user"
 import { httpRequest } from "@strands-agents/sdk/vended-tools/http-request";
 import { stop } from "@strands-agents/sdk/experimental/vended-tools/stop";
 import { fileEditor } from "@strands-agents/sdk/vended-tools/file-editor";
-import { webFetch } from "@strands-agents/sdk/vended-tools/web-fetch";
+import { makeWebFetch } from "@strands-agents/sdk/vended-tools/web-fetch";
 import { notebook } from "@strands-agents/sdk/vended-tools/notebook";
 import { sleep } from "@strands-agents/sdk/vended-tools/sleep";
 import { bash } from "@strands-agents/sdk/vended-tools/bash";
 
-// Bee CLI (in-process registry, no subprocess).
-import { BEE_MCP_TOOLS } from "@/mcp/toolRegistry";
+// Bee CLI helpers.
 import { beeContext, getMe } from "../utils/bee-com-bridge";
 import { syncCommand } from "@/commands/sync";
-import { callBeeTool } from "@/mcp/beeTools";
 
 export type ToolCall = { name: string; arguments: Record<string, string> };
 
-export { httpRequest, webFetch, fileEditor, notebook, bash, sleep, handoffToUser, stop };
+// Markdown mode: fetch a URL and return its text directly (no analyst model call).
+export const webFetch = makeWebFetch({ mode: "markdown" });
 
-// MARK: - Example custom tool
-export const weatherTool = tool({
-  name: "get_weather",
-  description: "Get the current weather for a city.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      city: { type: "string", description: "City name, for example Tokyo" },
-    },
-    required: ["city"],
-  } as JSONSchema,
-  callback: async (input) => {
-    const city = String((input as { city?: unknown } | null)?.city ?? "").trim();
-    if (!city) throw new Error("get_weather: missing city");
-    const res = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3`, {
-      headers: { "User-Agent": "curl" },
-    });
-    if (!res.ok) throw new Error(`wttr.in returned ${res.status}`);
-    return (await res.text()).trim();
-  },
-});
+export { httpRequest, fileEditor, notebook, bash, sleep, handoffToUser, stop };
 
-// MARK: - Bee tools from the CLI's MCP registry
-function beeResultText(result: Awaited<ReturnType<typeof callBeeTool>>): string {
-  return result.content
-    .map((part) => ("text" in part ? part.text : `[image ${part.mimeType}]`))
-    .join("\n");
-}
-
-export function beeToolsFor(names: readonly string[]): Tool[] {
-  const allow = new Set(names);
-  return BEE_MCP_TOOLS.filter((def) => allow.has(def.name)).map((def) =>
-    tool({
-      name: def.name,
-      description: def.description,
-      inputSchema: def.inputSchema as unknown as JSONSchema,
-      callback: async (input) => {
-        const result = await callBeeTool(
-          await beeContext(),
-          def.name,
-          (input ?? {}) as Record<string, unknown>,
-        );
-        const text = beeResultText(result);
-        if (result.isError === true) throw new Error(text || `${def.name} failed.`);
-        return text;
-      },
-    }),
-  );
-}
-
+// MARK: - Bee tools
+// The registry-backed Bee tools are invoked through the spawned MCP server; see
+// libraries/bee-mcp.ts. Only the non-registry helpers live here.
 export const beeMeTool = tool({
   name: "bee_me",
   description: "Fetch the Bee developer profile (name, timezone, id).",

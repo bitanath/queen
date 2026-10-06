@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/react */
 // Ported from termcn `opentui/alert`.
-import type { ReactNode } from "react";
 import { useTheme } from "../theme/use-theme";
 import type { BorderStyle } from "../theme/types";
 
@@ -16,7 +15,8 @@ const ICONS: Record<AlertVariant, string> = {
 export interface AlertProps {
   variant?: AlertVariant;
   title?: string;
-  children?: ReactNode;
+  message?: string;
+  appendix?: string;
   icon?: string;
   bordered?: boolean;
   borderStyle?: BorderStyle;
@@ -28,7 +28,8 @@ export interface AlertProps {
 export const Alert = ({
   variant = "info",
   title,
-  children,
+  message,
+  appendix,
   icon,
   bordered = true,
   borderStyle,
@@ -67,7 +68,8 @@ export const Alert = ({
           </text>
         )}
       </box>
-      {children && <text>{children}</text>}
+      {message && <text wrapMode="none" flexShrink={0}>{message}</text>}
+      {appendix && <text fg={theme.colors.mutedForeground} wrapMode="none" flexShrink={0}>{appendix}</text>}
     </>
   );
 

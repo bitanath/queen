@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Queen: build one self-contained executable from an elthur dylib + a GGUF.
+# Queen: build a self-contained executable from an elthur dylib + a GGUF.
 #
 #   ./build.sh --list
-#   ./build.sh -m qwen3.5 -p 0.8b -q q6_k --name queen-medium
+#   ./build.sh -m qwen3.5 -p 4b -q q5_k_m --name queen
+#   ./build.sh --no-model --name queen-lite
 #   ./build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
 #   ./build.sh [model.gguf] [--name queen-small]
 #
-# For all three queen-* variants in one go use ./build_all.sh.
+# For both queen / queen-lite in one go use ./build_all.sh.
 #
-# Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5, minicpm5
+# Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5
 # Single-model defaults: --model falcon-h1, --params <lowest listed>, --quant q8_0.
 # Output: tui/dist/$NAME (default: queen).
+#
+# --no-model builds the commands-only `queen-lite`: the elthur dylib is still
+# staged so the bundler resolves it, but no GGUF is appended and inference is
+# never initialized at runtime (see QUEEN_NO_MODEL).
 #
 # Env:
 #   ELTHUR_DIR        elthur checkout used when --dylib is absent (default ../elthur)
@@ -35,6 +40,7 @@ QUANT="q8_0"
 NAME="queen"
 DYLIB=""
 URL=""
+NO_MODEL=""
 POSITIONAL=()
 
 # family  params       repo                                        filename template (QUANT substituted)
@@ -48,8 +54,7 @@ qwen3.5    4b         unsloth/Qwen3.5-4B-GGUF                    Qwen3.5-4B-QUAN
 falcon-h1r 0.6b       tiiuae/Falcon-H1-Tiny-R-0.6B-GGUF         Falcon-H1R-0.6B-QUANT.gguf
 gemma4     e4b        unsloth/gemma-4-E4B-it-GGUF                gemma-4-E4B-it-QUANT.gguf
 apertus    8b         andreasmartin/apertus-v1.5-8b-text-Q8_0-GGUF apertus-v1.5-8b-text-quant.gguf
-lfm2.5     230m       LiquidAI/LFM2.5-230M-GGUF                  LFM2.5-230M-QUANT.gguf
-minicpm5   1b         openbmb/MiniCPM5-1B-GGUF                   MiniCPM5-1B-QUANT.gguf
+lfm2.5     2.6b       LiquidAI/LFM2.5-2.6B-GGUF                  LFM2.5-2.6B-QUANT.gguf
 EOF
 }
 
@@ -61,7 +66,6 @@ alias_family() {
     gemma4 | gemma | e4b) echo "gemma4" ;;
     apertus | ap) echo "apertus" ;;
     lfm2.5 | lfm2 | lfm) echo "lfm2.5" ;;
-    minicpm5 | minicpm | cpm | cpm5 | mini) echo "minicpm5" ;;
     *) return 1 ;;
   esac
 }
@@ -74,7 +78,7 @@ resolve_row() {
   catalog | awk -v f="$1" -v p="$2" '$1 == f && $2 == p { print $3 "|" $4; found = 1 } END { exit found ? 0 : 1 }'
 }
 
-usage() { sed -n '2,23p' "$0"; }
+usage() { sed -n '2,28p' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -85,6 +89,7 @@ while [ $# -gt 0 ]; do
     --dylib) DYLIB="${2:-}"; shift 2 ;;
     --url) URL="${2:-}"; shift 2 ;;
     --models-dir) MODELS_DIR="${2:-}"; shift 2 ;;
+    --no-model) NO_MODEL=1; shift ;;
     --list) catalog; exit 0 ;;
     -h | --help) usage; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -219,45 +224,49 @@ append_model() {
 [ -d "$BEE_CLI/node_modules" ] || ( cd "$BEE_CLI" && bun install ) # FIXME Resolve Source deps in Bee-CLI submodule
 
 
-if [ "${#POSITIONAL[@]}" -eq 1 ]; then
-  MODEL_PATH="${POSITIONAL[0]}"
-elif [ -n "$URL" ]; then
-  FILE="$(basename "${URL%%\?*}")"
-  echo "==> model: $FILE (from --url)"
-  mkdir -p "$MODELS_DIR"
-  MODEL_PATH="$MODELS_DIR/$FILE"
-  if [ -s "$MODEL_PATH" ]; then
-    echo "==> model present: $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
-  else
-    echo "==> downloading $URL"
-    if [ -n "${HF_TOKEN:-}" ]; then
-      curl -fL --retry 3 --retry-delay 2 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$MODEL_PATH" "$URL"
-    else
-      curl -fL --retry 3 --retry-delay 2 -C - -o "$MODEL_PATH" "$URL"
-    fi
-    echo "==> saved $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
-  fi
-elif [ -z "$FAMILY" ] && [ -n "${QUEEN_MODEL:-}" ]; then
-  MODEL_PATH="$QUEEN_MODEL"
-else
-  raw_family="${FAMILY:-falcon-h1}"
-  FAMILY="$(alias_family "$raw_family")" || {
-    echo "unknown model family: $raw_family (try --list)" >&2
-    exit 2
-  }
-  if [ -z "$PARAMS" ]; then
-    PARAMS="$(lowest_params "$FAMILY")"
-  fi
-  fetch_model "$FAMILY" "$PARAMS" "$QUANT"
-fi
-
-[ -f "$MODEL_PATH" ] || {
-  echo "model not found: $MODEL_PATH" >&2
-  exit 1
-}
-
 ensure_dylib
-export QUEEN_MODEL="$MODEL_PATH"
+
+if [ -n "$NO_MODEL" ]; then
+  echo "==> no model: commands-only build (queen-lite)"
+else
+  if [ "${#POSITIONAL[@]}" -eq 1 ]; then
+    MODEL_PATH="${POSITIONAL[0]}"
+  elif [ -n "$URL" ]; then
+    FILE="$(basename "${URL%%\?*}")"
+    echo "==> model: $FILE (from --url)"
+    mkdir -p "$MODELS_DIR"
+    MODEL_PATH="$MODELS_DIR/$FILE"
+    if [ -s "$MODEL_PATH" ]; then
+      echo "==> model present: $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
+    else
+      echo "==> downloading $URL"
+      if [ -n "${HF_TOKEN:-}" ]; then
+        curl -fL --retry 3 --retry-delay 2 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$MODEL_PATH" "$URL"
+      else
+        curl -fL --retry 3 --retry-delay 2 -C - -o "$MODEL_PATH" "$URL"
+      fi
+      echo "==> saved $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
+    fi
+  elif [ -z "$FAMILY" ] && [ -n "${QUEEN_MODEL:-}" ]; then
+    MODEL_PATH="$QUEEN_MODEL"
+  else
+    raw_family="${FAMILY:-falcon-h1}"
+    FAMILY="$(alias_family "$raw_family")" || {
+      echo "unknown model family: $raw_family (try --list)" >&2
+      exit 2
+    }
+    if [ -z "$PARAMS" ]; then
+      PARAMS="$(lowest_params "$FAMILY")"
+    fi
+    fetch_model "$FAMILY" "$PARAMS" "$QUANT"
+  fi
+
+  [ -f "$MODEL_PATH" ] || {
+    echo "model not found: $MODEL_PATH" >&2
+    exit 1
+  }
+  export QUEEN_MODEL="$MODEL_PATH"
+fi
 
 TARGET="bun-darwin-arm64"
 OUT="$TUI/dist/$NAME"
@@ -276,19 +285,28 @@ codesign --force -s - "$TUI/libelthur.dylib"
 
 echo "==> bundle"
 mkdir -p "$TUI/dist"
-( cd "$TUI" && bun build --compile index.tsx --target "$TARGET" --outfile "$OUT" \
-  --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\"" \
-  --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\"" \
-  --define "process.env.QUEEN_MODEL_FAMILY=\"$FAMILY\"" )
+DEFINES=(
+  --define "process.env.QUEEN_BEE_SHA=\"$BEE_SHA\""
+  --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\""
+  --define "process.env.QUEEN_MODEL_FAMILY=\"$FAMILY\""
+)
+if [ -n "$NO_MODEL" ]; then
+  DEFINES+=(--define "process.env.QUEEN_NO_MODEL=\"1\"")
+fi
+( cd "$TUI" && bun build --compile index.tsx --target "$TARGET" --outfile "$OUT" "${DEFINES[@]}" )
 
-echo "==> de-sign"
-codesign --remove-signature "$OUT" 2>/dev/null || true #HACK first remove binary signature to append model safely and resign
+if [ -n "$NO_MODEL" ]; then
+  echo "==> no model to append; signing as-is"
+else
+  echo "==> de-sign"
+  codesign --remove-signature "$OUT" 2>/dev/null || true #HACK first remove binary signature to append model safely and resign
 
-echo "==> append model"
-append_model "$MODEL_PATH" "$OUT"
+  echo "==> append model"
+  append_model "$MODEL_PATH" "$OUT"
 
-echo "==> patch __LINKEDIT"
-bun "$TUI/patchification.ts" "$OUT" #HACK Now the entire model is within the binary so we can sign it
+  echo "==> patch __LINKEDIT"
+  bun "$TUI/patchification.ts" "$OUT" #HACK Now the entire model is within the binary so we can sign it
+fi
 
 echo "==> sign"
 IDENTITY="${QUEEN_SIGN_IDENTITY:-}"

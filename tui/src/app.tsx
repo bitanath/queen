@@ -5,8 +5,9 @@ import { loadInitialTheme } from "./theme/themes";
 import { AppShell } from "./userinterface";
 import { Toaster } from "./interface/toaster";
 import { createCliRenderer } from "@opentui/core";
+import { McpProvider } from "./mcproviders";
 
-export const QUEEN_VERSION = "v0.1.0";
+export const QUEEN_VERSION = "v1.1.0";
 
 export function render() {
   const run = async () => {
@@ -15,7 +16,9 @@ export function render() {
       <ThemeProvider theme={loadInitialTheme()}>
         <Toaster>
           <AppShell>
-            <Dashboard />
+            <McpProvider>
+              <Dashboard />
+            </McpProvider>
           </AppShell>
         </Toaster>
       </ThemeProvider>,

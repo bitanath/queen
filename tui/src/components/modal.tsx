@@ -58,7 +58,7 @@ export function Modal({
         borderStyle={theme.border.style}
         borderColor={theme.colors.focusRing}
         backgroundColor={theme.colors.background}
-        title={` ${title} `}
+        title={` ${title} (esc) `}
         titleColor={theme.colors.primary}
         titleAlignment="center"
         paddingLeft={2}

@@ -3,14 +3,24 @@ import { Modal } from "../components/modal";
 import { useTheme } from "../theme/use-theme";
 
 export const COMMANDS: [string, string][] = [
-  ["/status", "auth + connection status"],
-  ["/me", "your Bee profile"],
-  ["/today [--context]", "today's brief (or full wearable context)"],
+  ["/activity", "recent Bee activity across conversations, summaries, notes, todos, insights"],
+  ["/today [--context]", "today's brief (calendar + emails); --context for wearable context"],
+  ["/now", "recent conversations with utterances"],
+  ["/changed", "recently changed entities"],
+  ["/conversations", "list developer conversations"],
+  ["/daily", "list daily summaries"],
+  ["/facts", "list developer facts"],
+  ["/insights", "list Bee insights"],
+  ["/journals", "list developer journals"],
+  ["/locations [--current]", "location clusters, or the current location with --current"],
+  ["/me", "fetch the developer profile"],
   ["/search <q> [--limit N]", "search Bee conversations"],
+  ["/status", "auth + connection status"],
   ["/login [--qr | --token <t>]", "connect the Bee app"],
   ["/logout", "clear stored credentials"],
   ["/theme", "open the theme switcher"],
-  ["/commands", "this help dialog"],
+  ["/help", "this command reference"],
+  ["/commands", "alias of /help"],
   ["/quit", "exit"],
 ];
 
@@ -65,10 +75,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         {KEYS.map(([label, text]) => (
           <Row key={label} label={label} text={text} labelColor={theme.colors.accent} textColor={theme.colors.mutedForeground} />
         ))}
-
-        <box marginTop={1}>
-          <text fg={theme.colors.mutedForeground}>Press esc or ctrl+p to close.</text>
-        </box>
       </scrollbox>
     </Modal>
   );
