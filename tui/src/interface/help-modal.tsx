@@ -15,6 +15,8 @@ export const COMMANDS: [string, string][] = [
   ["/locations [--current]", "location clusters, or the current location with --current"],
   ["/me", "fetch the developer profile"],
   ["/search <q> [--limit N]", "search Bee conversations"],
+  ["/refresh", "re-fetch Bee data and rebuild the analytics dashboard"],
+  ["/factors", "ask the local model to read the factor loadings"],
   ["/status", "auth + connection status"],
   ["/login [--qr | --token <t>]", "connect the Bee app"],
   ["/logout", "clear stored credentials"],
@@ -26,8 +28,9 @@ export const COMMANDS: [string, string][] = [
 
 const KEYS: [string, string][] = [
   ["ctrl+t", "theme switcher"],
-  ["ctrl+p", "this help"],
-  ["ctrl+k", "all commands"],
+  ["ctrl+p", "switch analytics page"],
+  ["ctrl+e", "toggle simulated days"],
+  ["ctrl+r", "refresh Bee data"],
   ["mouse drag", "select text · auto-copies"],
   ["enter", "send message"],
   ["esc", "clear input / cancel / close"],

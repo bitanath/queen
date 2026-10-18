@@ -17,6 +17,7 @@
     "@opentui/core": "^0.5.11",
     "@opentui/react": "^0.5.11",
     "@strands-agents/sdk": "^1.19.0",
+    "factor-js": "^1.0.4",
     "react": "^19.2.8"
   },
   "engines": {

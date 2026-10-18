@@ -24,24 +24,19 @@ submodules first:
 
 .. code-block:: bash
 
-   ./build_all.sh                              # queen, queen-lite
+   ./build_all.sh                              # queen
    ./build.sh --list
 
-``./build_all.sh`` builds both artifacts in one go (it just calls
-``./build.sh`` twice):
+``./build_all.sh`` builds the queen executable with the LFM2.5-2.6B model:
 
 +----------------------+--------------------+------------------+
 | artifact             | model              | notes            |
 +======================+====================+==================+
-| ``dist/queen``       | Qwen3.5-4B Q5_K_M  | default build    |
-+----------------------+--------------------+------------------+
-| ``dist/queen-lite``  | none               | commands only    |
+| ``dist/queen``       | LFM2.5-2.6B Q5_K_M  | default build    |
 +----------------------+--------------------+------------------+
 
-``queen`` bakes the default Qwen3.5-4B model into the executable. Pass
-``-m lfm2.5 -p 2.6b -q q5_k_m`` to build the LFM2.5-2.6B alternative instead.
-``queen-lite`` (``--no-model``) appends no GGUF at all: slash commands
-(``/me``, ``/today``, ``/login``, …) work, but free-form chat is disabled.
+``queen`` bakes the model into the executable. Pass ``-m qwen3.5 -p 4b -q
+q5_k_m`` to build the Qwen3.5-4B alternative instead.
 
 Dependencies
 ------------
@@ -56,7 +51,7 @@ Run
 
 .. code-block:: bash
 
-   ./tui/dist/queen           # or queen-lite
+   ./tui/dist/queen
 
 Credentials
 -----------

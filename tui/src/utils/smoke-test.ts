@@ -3,12 +3,11 @@ import { createQueenAgent } from "../functions/tools-execution";
 import { stripToolMarkup, webFetch } from "../functions/tool-definitions";
 import { getStatus, isNotLoggedIn, renderStatusMd } from "./bee-com-bridge";
 import { getBeeMcpState, invokeBeeTool, startBeeMcp, stopBeeMcp } from "../libraries/bee-mcp";
-import { modelAvailable } from "../functions/model-params";
 
 // FIXME Runtime: the full smoke takes ~60s. The "agent" check is ~37s and  "generic chat" ~15s (local model generation)
 const DEFAULT_PROMPT = "What is the weather in Tokyo?"; 
 
-type Check = { name: string; needsModel?: boolean; run: (prompt: string) => Promise<string> | string };
+type Check = { name: string; run: (prompt: string) => Promise<string> | string };
 
 const checks: Check[] = [
   {
@@ -27,7 +26,6 @@ const checks: Check[] = [
   },
   {
     name: "generic chat",
-    needsModel: true,
     run: (prompt) => {
       const text = stripToolMarkup(generate({ prompt })).trim();
       if (text.length === 0) throw new Error("empty response");
@@ -36,7 +34,6 @@ const checks: Check[] = [
   },
   {
     name: "agent",
-    needsModel: true,
     run: async (prompt) => {
       const agent = createQueenAgent(); //TODO just a random prompt to test a random tool call
       const result = await agent.invoke(prompt);
@@ -78,14 +75,8 @@ export async function runSmoke(): Promise<void> {
   console.log(`QUEEN_SMOKE prompt: ${JSON.stringify(prompt)}`);
 
   let failed = 0;
-  let skipped = 0;
   for (const check of checks) {
     const started = Date.now();
-    if (check.needsModel && !modelAvailable()) {
-      skipped++;
-      console.log(`  SKIP  ${check.name.padEnd(13)} (no model in this build)`);
-      continue;
-    }
     try {
       const detail = await check.run(prompt);
       console.log(`  PASS  ${check.name.padEnd(13)} (${Date.now() - started}ms)  ${detail}`);
@@ -97,8 +88,7 @@ export async function runSmoke(): Promise<void> {
 
   await stopBeeMcp(); // kill the spawned server so the process can exit
 
-  const passed = checks.length - failed - skipped;
-  const tail = skipped > 0 ? `, ${skipped} skipped` : "";
-  console.log(`QUEEN_SMOKE: ${passed}/${checks.length} passed${tail}`);
+  const passed = checks.length - failed;
+  console.log(`QUEEN_SMOKE: ${passed}/${checks.length} passed`);
   if (failed > 0) process.exitCode = 1;
 }

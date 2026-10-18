@@ -1,5 +1,5 @@
 import {type BaseModelConfig, type JSONSchema, type Message, type ModelStreamEvent, type StreamOptions, type SystemPrompt, type StopReason, type ToolSpec} from "@strands-agents/sdk"
-import { beginStream, freeStream, pollStream, streamTruncated, toolCallsOf, type EngineMessage, } from "../utils/queen-ffi";
+import { beginStream, freeStream, pollStream, promptTokensOf, streamTruncated, toolCallsOf, ttftMsOf, type EngineMessage, } from "../utils/queen-ffi";
 import { Model } from "@strands-agents/sdk";
 import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
 import { stripToolMarkup } from "./tool-definitions";
@@ -113,6 +113,8 @@ export class ElthurModel extends Model<ElthurModelConfig> {
   lastStopReason: StopReason = "endTurn";
   lastContextUsed = 0;
   lastContextLimit = CONTEXT_WINDOW;
+  lastPromptTokens = 0;
+  lastTtftMs = 0;
 
   constructor(config: ElthurModelConfig = {}) {
     super();
@@ -193,6 +195,8 @@ export class ElthurModel extends Model<ElthurModelConfig> {
       const calls = cancelled ? [] : toolCallsOf(handle);
       this.lastTruncated = truncated;
       this.lastMaxTokens = maxTokens;
+      this.lastPromptTokens = cancelled ? 0 : promptTokensOf(handle);
+      this.lastTtftMs = cancelled ? 0 : ttftMsOf(handle);
 
       const stamp = Date.now().toString(36);
       let index = 0;
@@ -217,6 +221,8 @@ export class ElthurModel extends Model<ElthurModelConfig> {
           maxTokens,
           contextUsed: this.lastContextUsed,
           contextLimit: this.lastContextLimit,
+          promptTokens: this.lastPromptTokens,
+          ttftMs: this.lastTtftMs,
         },
       };
     } finally {

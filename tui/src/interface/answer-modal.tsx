@@ -6,11 +6,12 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
 import { Modal } from "../components/modal";
 import { WrapTable } from "../components/wrap-table";
+import { Matrix } from "../components/matrix";
 import { SearchResults } from "../components/search-results";
 import { DetailView } from "../components/detail-view";
 import { Spinner } from "../components/spinner";
 import { useTheme } from "../theme/use-theme";
-import { tableColumns, tableRows } from "../utils/dashboard-spec";
+import { tableColumns, tableRows } from "../utils/table-spec";
 import { getResultDetail } from "../utils/bee-com-bridge";
 import type { AnswerView } from "../utils/answer-view";
 
@@ -123,9 +124,31 @@ export function AnswerModal({ view, onClose }: { view: AnswerView; onClose: () =
         <scrollbox ref={scrollRef} flexGrow={1} minHeight={0}>
           <SearchResults results={current.results} selected={selected} onOpen={openResult} />
         </scrollbox>
-      ) : current.table ? (
+      ) : current.matrix || current.table || current.tables || current.pending ? (
         <scrollbox flexGrow={1} minHeight={0}>
-          <WrapTable columns={tableColumns(current.table)} data={tableRows(current.table)} totalWidth={tableW} />
+          {current.matrix && (
+            <Matrix
+              rowLabels={current.matrix.rowLabels}
+              colLabels={current.matrix.colLabels}
+              data={current.matrix.data}
+              totalWidth={tableW}
+            />
+          )}
+          {current.table && (
+            <box marginTop={current.matrix ? 1 : 0}>
+              <WrapTable columns={tableColumns(current.table)} data={tableRows(current.table)} totalWidth={tableW} />
+            </box>
+          )}
+          {current.tables?.map((t, i) => (
+            <box key={i} marginTop={i === 0 && !current.matrix && !current.table ? 0 : 1}>
+              <WrapTable columns={tableColumns(t)} data={tableRows(t)} totalWidth={tableW} />
+            </box>
+          ))}
+          {current.pending && (
+            <box marginTop={1}>
+              <Spinner label={current.pending} />
+            </box>
+          )}
         </scrollbox>
       ) : (
         <scrollbox flexGrow={1} minHeight={0} stickyScroll stickyStart="top">

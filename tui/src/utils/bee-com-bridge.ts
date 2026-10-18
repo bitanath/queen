@@ -14,7 +14,7 @@ import { renderQrCode } from "@/utils/qrCode";
 import { resolveTimeZone } from "@/utils/markdown";
 import { nowCommand } from "@/commands/now";
 import { changedCommand } from "@/commands/changed";
-import type { TableSpec } from "./dashboard-spec";
+import type { TableSpec } from "./table-spec";
 import type { AnswerView, SearchResult, TranscriptLine } from "./answer-view";
 
 import type {
@@ -531,7 +531,7 @@ export async function getTodayContext(env: Environment = "prod"): Promise<Comman
 }
 
 // Run a bee-cli command that prints to stdout and capture what it printed.
-async function captureConsole(fn: () => Promise<void>): Promise<string> {
+export async function captureConsole(fn: () => Promise<void>): Promise<string> {
   const original = console.log;
   const lines: string[] = [];
   console.log = (...args: unknown[]) => {

@@ -16,6 +16,13 @@ if (process.env.QUEEN_ROLE === "bee-mcp") {
   } else if (smokeRequested()) {
     void runSmoke();
   } else {
-    render();
+    // `queen fetch all TODOs before yesterday` and
+    // `queen "fetch all TODOs before yesterday"` both arrive here as one line.
+    const prompt = process.argv.slice(2).join(" ").trim();
+    const { runExternalCommand } = await import("./src/functions/action/external");
+    if (await runExternalCommand(prompt)) {
+      process.exit(0);
+    }
+    render(prompt);
   }
 }

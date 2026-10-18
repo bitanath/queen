@@ -8,6 +8,7 @@ import { CommandsModal } from "./interface/commands-modal";
 import { AnswerModal } from "./interface/answer-modal";
 import { StatusBar } from "./interface/status-bar";
 import { useToast } from "./interface/toaster";
+import { useTheme } from "./theme/use-theme";
 import { Modal } from "./components/modal";
 import { ToolApproval } from "./components/tool-approval";
 import { allowAlways, setApprovalHandler, type ApprovalRequest } from "./utils/approval-broker";
@@ -34,10 +35,8 @@ export function useUi(): UiContextValue {
   return useContext(UiContext);
 }
 
-// MARK: - keybindings for help and theme change
+// MARK: - keybindings
 const THEME_KEY = "t";
-const HELP_KEY = "p";
-const COMMANDS_KEY = "k";
 
 function isCombo(key: { ctrl: boolean; name: string }, name: string): boolean {
   return key.ctrl && key.name === name;
@@ -50,6 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const approvalResolver = useRef<((ok: boolean) => void) | null>(null);
   const renderer = useRenderer();
   const showToast = useToast();
+  const theme = useTheme();
 
   // Bridge tool execution to the approval modal. Headless runs have no handler.
   useEffect(() => {
@@ -105,12 +105,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (isCombo(key, THEME_KEY)) {
       key.preventDefault();
       setModal("theme");
-    } else if (isCombo(key, HELP_KEY)) {
-      key.preventDefault();
-      setModal("help");
-    } else if (isCombo(key, COMMANDS_KEY)) {
-      key.preventDefault();
-      setModal("commands");
     }
   });
 
@@ -123,7 +117,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <UiContext.Provider value={value}>
-      <box flexDirection="column" width="100%" height="100%" position="relative">
+      <box
+        flexDirection="column"
+        width="100%"
+        height="100%"
+        position="relative"
+        backgroundColor={theme.colors.background}
+      >
         <box flexGrow={1} minHeight={0}>
           {children}
         </box>

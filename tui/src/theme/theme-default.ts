@@ -1,4 +1,4 @@
-// termcn OpenCode theme — queen's palette.
+//MARK: - termcn OpenCode theme — queen's palette, using this as default
 import type { Theme } from "./types";
 
 export const classicTheme: Theme = {

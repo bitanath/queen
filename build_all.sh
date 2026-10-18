@@ -3,9 +3,8 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-"$DIR/build.sh" -m qwen3.5 -p 4b -q q5_k_m --name queen
-"$DIR/build.sh" --no-model --name queen-lite
+"$DIR/build.sh" -m lfm2.5 -p 2.6b -q q5_k_m --name queen
 
 echo ""
 echo "built:"
-ls -lh "$DIR/tui/dist/queen" "$DIR/tui/dist/queen-lite" 2>/dev/null || true
+ls -lh "$DIR/tui/dist/queen" 2>/dev/null || true

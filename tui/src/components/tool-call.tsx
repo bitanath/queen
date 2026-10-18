@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/react */
-// Ported from termcn `opentui/tool-call`. `focus` gates the global keyboard
-// handler so many mounted tool calls don't all toggle at once.
+// Ported from termcn `opentui/tool-call`
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
 
@@ -17,6 +16,15 @@ export interface ToolCallProps {
   collapsible?: boolean;
   defaultCollapsed?: boolean;
   focus?: boolean;
+}
+
+function previewResult(result: unknown): string {
+  const text = typeof result === "string" ? result : (JSON.stringify(result, null, 2) ?? "");
+  const lines = text.split("\n");
+  const head = lines.slice(0, 4).join("\n");
+  const clipped = head.length > 320 ? `${head.slice(0, 320).trimEnd()}…` : head;
+  const truncated = lines.length > 4 || text.length > clipped.length;
+  return truncated ? `${clipped}\n… (${text.length.toLocaleString()} chars)` : clipped; //TODO show a small tool summary
 }
 
 export const ToolCall = ({
@@ -38,7 +46,6 @@ export const ToolCall = ({
   const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   const spinnerIcon = spinnerFrames[frame % spinnerFrames.length] ?? "⠋";
 
-  // Only animate while a call is in flight; idle calls don't need a timer.
   useEffect(() => {
     if (status !== "running") return;
     const id = setInterval(() => setFrame((f) => f + 1), Math.round(1000 / 12));
@@ -103,7 +110,12 @@ export const ToolCall = ({
 
   return (
     <box flexDirection="column">
-      <box gap={1}>
+      <box
+        flexDirection="row"
+        gap={1}
+        alignItems="center"
+        onMouseDown={collapsible ? () => setCollapsed((c) => !c) : undefined}
+      >
         {statusIcon()}
         <text fg={nameColor}>{status !== "pending" ? <b>{name}</b> : name}</text>
         {durationText && (
@@ -128,9 +140,7 @@ export const ToolCall = ({
           {result !== undefined && (
             <box flexDirection="column">
               <text fg={theme.colors.mutedForeground}>Result:</text>
-              <text fg={theme.colors.mutedForeground}>
-                {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
-              </text>
+              <text fg={theme.colors.mutedForeground}>{previewResult(result)}</text>
             </box>
           )}
         </box>

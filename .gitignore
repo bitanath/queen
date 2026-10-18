@@ -23,6 +23,7 @@ models/*
 # caches / coverage / OS / logs
 .DS_Store
 .cache
+bee-sync/
 *.tsbuildinfo
 logs/
 *.log

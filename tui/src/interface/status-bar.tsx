@@ -9,12 +9,11 @@ import { Spacer } from "../components/spacer";
 // leading and trailing Spacer so the whole set is centred, and each chip is
 // centred within its column. Only the single row above is spacing.
 const ITEMS: [string, string][] = [
-  ["enter", "send"],
-  ["esc", "clear"],
+  ["enter", "select"],
+  ["tab", "focus"],
+  ["ctrl+d", "actions/chat"],
   ["ctrl+t", "theme"],
-  ["ctrl+p", "help"],
-  ["ctrl+k", "commands"],
-  ["ctrl+e", "page"],
+  ["esc", "cancel"],
   ["ctrl+c", "quit"],
 ];
 

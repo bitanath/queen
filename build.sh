@@ -3,19 +3,12 @@
 #
 #   ./build.sh --list
 #   ./build.sh -m qwen3.5 -p 4b -q q5_k_m --name queen
-#   ./build.sh --no-model --name queen-lite
 #   ./build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
 #   ./build.sh [model.gguf] [--name queen-small]
-#
-# For both queen / queen-lite in one go use ./build_all.sh.
 #
 # Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5
 # Single-model defaults: --model falcon-h1, --params <lowest listed>, --quant q8_0.
 # Output: tui/dist/$NAME (default: queen).
-#
-# --no-model builds the commands-only `queen-lite`: the elthur dylib is still
-# staged so the bundler resolves it, but no GGUF is appended and inference is
-# never initialized at runtime (see QUEEN_NO_MODEL).
 #
 # Env:
 #   ELTHUR_DIR        elthur checkout used when --dylib is absent (default ../elthur)
@@ -40,7 +33,6 @@ QUANT="q8_0"
 NAME="queen"
 DYLIB=""
 URL=""
-NO_MODEL=""
 POSITIONAL=()
 
 # family  params       repo                                        filename template (QUANT substituted)
@@ -89,7 +81,7 @@ while [ $# -gt 0 ]; do
     --dylib) DYLIB="${2:-}"; shift 2 ;;
     --url) URL="${2:-}"; shift 2 ;;
     --models-dir) MODELS_DIR="${2:-}"; shift 2 ;;
-    --no-model) NO_MODEL=1; shift ;;
+
     --list) catalog; exit 0 ;;
     -h | --help) usage; exit 0 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -226,47 +218,43 @@ append_model() {
 
 ensure_dylib
 
-if [ -n "$NO_MODEL" ]; then
-  echo "==> no model: commands-only build (queen-lite)"
-else
-  if [ "${#POSITIONAL[@]}" -eq 1 ]; then
-    MODEL_PATH="${POSITIONAL[0]}"
-  elif [ -n "$URL" ]; then
-    FILE="$(basename "${URL%%\?*}")"
-    echo "==> model: $FILE (from --url)"
-    mkdir -p "$MODELS_DIR"
-    MODEL_PATH="$MODELS_DIR/$FILE"
-    if [ -s "$MODEL_PATH" ]; then
-      echo "==> model present: $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
-    else
-      echo "==> downloading $URL"
-      if [ -n "${HF_TOKEN:-}" ]; then
-        curl -fL --retry 3 --retry-delay 2 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$MODEL_PATH" "$URL"
-      else
-        curl -fL --retry 3 --retry-delay 2 -C - -o "$MODEL_PATH" "$URL"
-      fi
-      echo "==> saved $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
-    fi
-  elif [ -z "$FAMILY" ] && [ -n "${QUEEN_MODEL:-}" ]; then
-    MODEL_PATH="$QUEEN_MODEL"
+if [ "${#POSITIONAL[@]}" -eq 1 ]; then
+  MODEL_PATH="${POSITIONAL[0]}"
+elif [ -n "$URL" ]; then
+  FILE="$(basename "${URL%%\?*}")"
+  echo "==> model: $FILE (from --url)"
+  mkdir -p "$MODELS_DIR"
+  MODEL_PATH="$MODELS_DIR/$FILE"
+  if [ -s "$MODEL_PATH" ]; then
+    echo "==> model present: $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
   else
-    raw_family="${FAMILY:-falcon-h1}"
-    FAMILY="$(alias_family "$raw_family")" || {
-      echo "unknown model family: $raw_family (try --list)" >&2
-      exit 2
-    }
-    if [ -z "$PARAMS" ]; then
-      PARAMS="$(lowest_params "$FAMILY")"
+    echo "==> downloading $URL"
+    if [ -n "${HF_TOKEN:-}" ]; then
+      curl -fL --retry 3 --retry-delay 2 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$MODEL_PATH" "$URL"
+    else
+      curl -fL --retry 3 --retry-delay 2 -C - -o "$MODEL_PATH" "$URL"
     fi
-    fetch_model "$FAMILY" "$PARAMS" "$QUANT"
+    echo "==> saved $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1))"
   fi
-
-  [ -f "$MODEL_PATH" ] || {
-    echo "model not found: $MODEL_PATH" >&2
-    exit 1
+elif [ -z "$FAMILY" ] && [ -n "${QUEEN_MODEL:-}" ]; then
+  MODEL_PATH="$QUEEN_MODEL"
+else
+  raw_family="${FAMILY:-falcon-h1}"
+  FAMILY="$(alias_family "$raw_family")" || {
+    echo "unknown model family: $raw_family (try --list)" >&2
+    exit 2
   }
-  export QUEEN_MODEL="$MODEL_PATH"
+  if [ -z "$PARAMS" ]; then
+    PARAMS="$(lowest_params "$FAMILY")"
+  fi
+  fetch_model "$FAMILY" "$PARAMS" "$QUANT"
 fi
+
+[ -f "$MODEL_PATH" ] || {
+  echo "model not found: $MODEL_PATH" >&2
+  exit 1
+}
+export QUEEN_MODEL="$MODEL_PATH"
 
 TARGET="bun-darwin-arm64"
 OUT="$TUI/dist/$NAME"
@@ -290,23 +278,16 @@ DEFINES=(
   --define "process.env.QUEEN_ELTHUR_SHA=\"$ELTHUR_SHA\""
   --define "process.env.QUEEN_MODEL_FAMILY=\"$FAMILY\""
 )
-if [ -n "$NO_MODEL" ]; then
-  DEFINES+=(--define "process.env.QUEEN_NO_MODEL=\"1\"")
-fi
 ( cd "$TUI" && bun build --compile index.tsx --target "$TARGET" --outfile "$OUT" "${DEFINES[@]}" )
 
-if [ -n "$NO_MODEL" ]; then
-  echo "==> no model to append; signing as-is"
-else
-  echo "==> de-sign"
-  codesign --remove-signature "$OUT" 2>/dev/null || true #HACK first remove binary signature to append model safely and resign
+echo "==> de-sign"
+codesign --remove-signature "$OUT" 2>/dev/null || true #HACK first remove binary signature to append model safely and resign
 
-  echo "==> append model"
-  append_model "$MODEL_PATH" "$OUT"
+echo "==> append model"
+append_model "$MODEL_PATH" "$OUT"
 
-  echo "==> patch __LINKEDIT"
-  bun "$TUI/patchification.ts" "$OUT" #HACK Now the entire model is within the binary so we can sign it
-fi
+echo "==> patch __LINKEDIT"
+bun "$TUI/patchification.ts" "$OUT" #HACK Now the entire model is within the binary so we can sign it
 
 echo "==> sign"
 IDENTITY="${QUEEN_SIGN_IDENTITY:-}"

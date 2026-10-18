@@ -30,6 +30,8 @@ const { symbols } = dlopen(libPath, {
   stream_poll: { args: ["ptr", "ptr", "usize"], returns: "i64" }, // poll: >0 bytes written, 0 idle, -1 done, -2 error.
   stream_free: { args: ["ptr"], returns: "void" },
   stream_hit_length_limit: { args: ["ptr"], returns: "bool" },
+  stream_prompt_tokens: { args: ["ptr"], returns: "usize" },
+  stream_ttft_nanoseconds: { args: ["ptr"], returns: "u64" },
   free_string: { args: ["ptr"], returns: "void" },
 });
 
@@ -123,6 +125,24 @@ export function streamTruncated(handle: Pointer): boolean {
 
 export function freeStream(handle: Pointer): void {
   symbols.stream_free(handle);
+}
+
+/** Number of prompt tokens the last generation had to prefill. */
+export function promptTokensOf(handle: Pointer): number {
+  return Number(symbols.stream_prompt_tokens(handle));
+}
+
+/** Time to first token (prefill) in milliseconds for the last generation. */
+export function ttftMsOf(handle: Pointer): number {
+  return Math.round(Number(symbols.stream_ttft_nanoseconds(handle)) / 1e6);
+}
+
+/**
+ * Load the weights ahead of the first user turn so the first message doesn't
+ * pay the model-load latency. Safe to call more than once.
+ */
+export function warmModel(system?: string): void {
+  ensureModel(system);
 }
 
 function start(prompt: string, system: string, maxTokens: number): Pointer {

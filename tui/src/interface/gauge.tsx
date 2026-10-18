@@ -9,7 +9,9 @@ export interface GaugeProps {
   value: number;
   min?: number;
   max?: number;
+  title?: string;
   label?: string;
+  subLabel?: string;
   color?: string;
   size?: GaugeSize;
 }
@@ -106,7 +108,9 @@ export const Gauge = ({
   value,
   min = 0,
   max = 100,
+  title,
   label,
+  subLabel,
   color,
   size = "md",
 }: GaugeProps) => {
@@ -137,7 +141,13 @@ export const Gauge = ({
   return (
     <box flexDirection="column">
       {gaugeNode}
+      {title && (
+        <text fg={theme.colors.foreground}>
+          <b>{title}</b>
+        </text>
+      )}
       {label && <text fg={theme.colors.mutedForeground}>{label}</text>}
+      {subLabel && <text fg={theme.colors.mutedForeground}>{subLabel}</text>}
     </box>
   );
 };

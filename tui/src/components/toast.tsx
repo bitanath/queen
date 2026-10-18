@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/react */
-// Ported from termcn `opentui/toast`: an auto-dismissing notification with icon,
-// message, and a shrinking progress bar + countdown.
+// Ported from termcn `opentui/toast`
 import { useEffect, useState } from "react";
 
 import { useTheme } from "../theme/use-theme";
@@ -87,17 +86,17 @@ export const Toast = ({
       backgroundColor={theme.colors.background}
       paddingLeft={1}
       paddingRight={1}
-      paddingTop={0}
-      paddingBottom={0}
+      paddingTop={1}
+      paddingBottom={1}
       flexDirection="column"
     >
-      <box gap={1}>
+      <box flexDirection="row" gap={1}>
         <text fg={variantColor} selectable={false}>
           <b>{resolvedIcon}</b>
         </text>
         <text selectable={false}>{message}</text>
       </box>
-      <box gap={1}>
+      <box flexDirection="row" gap={1}>
         <text fg={variantColor} selectable={false}>{bar}</text>
         <text fg={theme.colors.muted} selectable={false}>{`${remainingSeconds}s`}</text>
       </box>

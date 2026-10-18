@@ -127,9 +127,16 @@ export const padCell = (
 
 // MARK: - display-width aware helpers (CJK/emoji count as 2 columns)
 
+const CONTROL_CHARS =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+/// Strip invisible formatting characters (bidi controls, zero-width, C0/C1) so
+/// measured display width matches what the terminal actually draws.
+export const sanitize = (value: string): string => String(value).replace(CONTROL_CHARS, "");
+
 /// Terminal display width of a string (Bun.stringWidth when available).
 export const displayWidth = (value: string): number => {
-  const s = String(value);
+  const s = sanitize(value);
   const sw = (globalThis as { Bun?: { stringWidth?: (s: string) => number } }).Bun
     ?.stringWidth;
   return typeof sw === "function" ? sw(s) : s.length;
@@ -138,10 +145,11 @@ export const displayWidth = (value: string): number => {
 /// Truncate to at most `width` display columns (never splits a wide glyph).
 export const truncateDisplay = (value: string, width: number): string => {
   if (width <= 0) return "";
-  if (displayWidth(value) <= width) return value;
+  const s = sanitize(value);
+  if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
-  for (const ch of value) {
+  for (const ch of s) {
     const cw = displayWidth(ch);
     if (w + cw > width) break;
     out += ch;
@@ -177,7 +185,7 @@ export const padDisplay = (
 /// Word-wrap text into lines no wider than `width` display columns. Words wider
 /// than the column are hard-broken.
 export const wrapDisplay = (value: string, width: number): string[] => {
-  const clean = String(value).replace(/\s+/g, " ").trim();
+  const clean = sanitize(value).replace(/\s+/g, " ").trim();
   if (width <= 0) return [""];
   if (!clean) return [""];
 

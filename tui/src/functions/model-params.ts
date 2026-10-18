@@ -63,14 +63,4 @@ export function modelParams(
   return BY_FAMILY[family] ?? DEFAULTS;
 }
 
-/**
- * True for the `queen-lite` artifact: no GGUF is appended and inference is
- * never initialized. Injected at build time by build.sh via
- * `--define process.env.QUEEN_NO_MODEL="1"`.
- */
-export const MODEL_DISABLED = process.env.QUEEN_NO_MODEL === "1";
 
-/** Whether local model inference is available in this build. */
-export function modelAvailable(): boolean {
-  return !MODEL_DISABLED;
-}
