@@ -16,20 +16,99 @@ ROSETTA="${QUEEN_COLIMA_ROSETTA:-1}"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 <build|monitor|verify|amd64|tui|audit|status|stop|clean|all>
+usage: $0 <build|monitor|verify|amd64|tui|audit|shas|status|stop|clean|all>
 
-  build    colima up, build $PLATFORMS, push $IMAGE:$TAG (tee $LOG)
+  build    require a clean tree, then build $PLATFORMS and push $IMAGE:$TAG
   monitor  tail -f $LOG
-  verify   pull $VERIFY_PLATFORM, run uname/version/status with $BEE_DIR mounted
+  verify   pull $VERIFY_PLATFORM, run uname/version/status with $BEE_DIR mounted,
+           then check the baked revisions and audit for credentials
   amd64    same as verify but for linux/amd64
   tui      interactive queen in a container, $BEE_DIR mounted
   audit    prove the image itself carries no credentials
+  shas     prove the baked revisions match the gitlinks recorded in HEAD
   status   show the pushed manifest list
   stop     remove the builder and stop colima
   clean    remove the builder and delete colima entirely
-  all      build, verify, audit, stop
+  all      build, verify, stop
+
+env:
+  QUEEN_ALLOW_DIRTY=1      skip the clean-tree check, for a scratch build
+  QUEEN_FORCE_PULL=1       drop the local image first, so the pull is really tested
+  QUEEN_COLIMA_ROSETTA=0   start colima with binfmt/QEMU instead of Rosetta
 EOF
   exit 2
+}
+
+log() {
+  printf '\n== %s\n' "$*" | tee -a "$LOG"
+}
+
+run_logged() {
+  "$@" 2>&1 | tee -a "$LOG"
+}
+
+recorded_sha() {
+  git -C "$ROOT" rev-parse "HEAD:$1" 2>/dev/null || echo docker
+}
+
+repo_dirty() {
+  local path="$1" reasons=""
+  if ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
+    printf 'not-a-git-repo'
+    return 0
+  fi
+  git -C "$path" diff --quiet 2>/dev/null || reasons="${reasons:+$reasons }unstaged"
+  git -C "$path" diff --cached --quiet 2>/dev/null || reasons="${reasons:+$reasons }staged"
+  local untracked
+  untracked="$(git -C "$path" ls-files --others --exclude-standard 2>/dev/null | head -3)"
+  [ -z "$untracked" ] || reasons="${reasons:+$reasons }untracked[$(printf '%s' "$untracked" | tr '\n' ',')]"
+  printf '%s' "$reasons"
+}
+
+print_lines() {
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '  %s\n' "$line" | tee -a "$LOG"
+  done <<< "$1"
+}
+
+require_clean() {
+  if [ -n "${QUEEN_ALLOW_DIRTY:-}" ]; then
+    log "require_clean: skipped (QUEEN_ALLOW_DIRTY set)"
+    return 0
+  fi
+  local fatal="" warning="" sub head recorded reasons
+
+  for sub in elthur; do
+    reasons="$(repo_dirty "$ROOT/$sub")"
+    [ -z "$reasons" ] || fatal="${fatal}${sub}: local edits ($reasons)"$'\n'
+  done
+  reasons="$(repo_dirty "$ROOT")"
+  [ -z "$reasons" ] || fatal="${fatal}queen: local edits ($reasons)"$'\n'
+
+  reasons="$(repo_dirty "$ROOT/bee-cli")"
+  [ -z "$reasons" ] || warning="${warning}bee-cli: local edits ($reasons)"$'\n'
+
+  for sub in elthur bee-cli; do
+    head="$(git -C "$ROOT/$sub" rev-parse HEAD 2>/dev/null || echo none)"
+    recorded="$(git -C "$ROOT" rev-parse "HEAD:$sub" 2>/dev/null || echo none)"
+    if [ "$head" != "$recorded" ]; then
+      fatal="${fatal}${sub}: gitlink says ${recorded:0:12} but the submodule is at ${head:0:12}"$'\n'
+    fi
+  done
+
+  if [ -n "$warning" ]; then
+    log "require_clean: warning, third-party submodule has local edits"
+    print_lines "$warning"
+  fi
+  if [ -n "$fatal" ]; then
+    log "require_clean: REFUSING to build, the tree does not match the recorded revision"
+    print_lines "$fatal"
+    echo "  commit the changes, or set QUEEN_ALLOW_DIRTY=1 for a scratch build" | tee -a "$LOG"
+    return 1
+  fi
+  log "require_clean: queen and elthur clean, gitlinks match the recorded SHAs"
 }
 
 colima_up() {
@@ -55,14 +134,6 @@ need_model() {
   }
 }
 
-log() {
-  printf '\n== %s\n' "$*" | tee -a "$LOG"
-}
-
-run_logged() {
-  "$@" 2>&1 | tee -a "$LOG"
-}
-
 with_creds() {
   local platform="$1"
   shift
@@ -75,13 +146,15 @@ with_creds() {
 }
 
 cmd_build() {
-  colima_up
+  require_clean
   need_model
+  colima_up
+  log "build $PLATFORMS as $IMAGE:$TAG"
   docker buildx build \
     --platform "$PLATFORMS" \
     --build-arg "MODEL_FILE=$MODEL_FILE" \
-    --build-arg "QUEEN_BEE_SHA=$(git -C "$ROOT/bee-cli" rev-parse HEAD 2>/dev/null || echo docker)" \
-    --build-arg "QUEEN_ELTHUR_SHA=$(git -C "$ROOT/elthur" rev-parse HEAD 2>/dev/null || echo docker)" \
+    --build-arg "QUEEN_BEE_SHA=$(recorded_sha bee-cli)" \
+    --build-arg "QUEEN_ELTHUR_SHA=$(recorded_sha elthur)" \
     --tag "$IMAGE:$TAG" \
     --push \
     --progress plain \
@@ -100,31 +173,34 @@ cmd_pull() {
   run_logged docker pull --platform "$1" "$IMAGE:$TAG"
 }
 
-cmd_verify() {
-  cmd_pull "$VERIFY_PLATFORM"
-  log "uname"
-  run_logged docker run --rm --platform "$VERIFY_PLATFORM" --entrypoint uname "$IMAGE:$TAG" -m
-  log "version"
-  with_creds "$VERIFY_PLATFORM" version
-  log "status"
-  with_creds "$VERIFY_PLATFORM" status
-  cmd_audit "$VERIFY_PLATFORM"
-}
+cmd_shas() {
+  local platform="${1:-$VERIFY_PLATFORM}"
+  local out="" ok=1 pair name sha subs="bee-cli elthur"
 
-cmd_amd64() {
-  cmd_pull linux/amd64
-  log "uname"
-  run_logged docker run --rm --platform linux/amd64 --entrypoint uname "$IMAGE:$TAG" -m
-  log "version"
-  with_creds linux/amd64 version
-  log "status"
-  with_creds linux/amd64 status
-  cmd_audit linux/amd64
-}
+  if [ -d "$BEE_DIR" ]; then
+    out="$(docker run --rm --platform "$platform" -v "$BEE_DIR:/root/.bee" "$IMAGE:$TAG" status 2>&1 || true)"
+  else
+    out="$(docker run --rm --platform "$platform" "$IMAGE:$TAG" version 2>&1 || true)"
+    subs="bee-cli"
+  fi
 
-cmd_tui() {
-  log "tui $VERIFY_PLATFORM (bee dir $BEE_DIR)"
-  docker run --rm -it --platform "$VERIFY_PLATFORM" -v "$BEE_DIR:/root/.bee" "$IMAGE:$TAG"
+  log "baked revisions ($platform, checking: $subs)"
+  for pair in "bee-cli:$(recorded_sha bee-cli)" "elthur:$(recorded_sha elthur)"; do
+    name="${pair%%:*}"
+    sha="${pair#*:}"
+    case " $subs " in
+      *" $name "*) ;;
+      *) continue ;;
+    esac
+    case "$out" in
+      *"$sha"*) printf '  %-8s %s MATCH\n' "$name" "${sha:0:12}" | tee -a "$LOG" ;;
+      *) printf '  %-8s %s MISMATCH\n' "$name" "${sha:0:12}" | tee -a "$LOG"; ok=0 ;;
+    esac
+  done
+  if [ "$ok" != "1" ]; then
+    echo "baked revisions do not match the gitlinks recorded in HEAD" | tee -a "$LOG"
+    return 1
+  fi
 }
 
 cmd_audit() {
@@ -149,6 +225,35 @@ cmd_audit() {
       if [ -n "$bad" ]; then echo "DIRTY:$bad"; exit 1; fi
       echo "clean: no credentials in image"
     '
+}
+
+cmd_verify() {
+  cmd_pull "$VERIFY_PLATFORM"
+  log "uname"
+  run_logged docker run --rm --platform "$VERIFY_PLATFORM" --entrypoint uname "$IMAGE:$TAG" -m
+  log "version"
+  with_creds "$VERIFY_PLATFORM" version
+  log "status"
+  with_creds "$VERIFY_PLATFORM" status
+  cmd_shas "$VERIFY_PLATFORM"
+  cmd_audit "$VERIFY_PLATFORM"
+}
+
+cmd_amd64() {
+  cmd_pull linux/amd64
+  log "uname"
+  run_logged docker run --rm --platform linux/amd64 --entrypoint uname "$IMAGE:$TAG" -m
+  log "version"
+  with_creds linux/amd64 version
+  log "status"
+  with_creds linux/amd64 status
+  cmd_shas linux/amd64
+  cmd_audit linux/amd64
+}
+
+cmd_tui() {
+  log "tui $VERIFY_PLATFORM (bee dir $BEE_DIR)"
+  docker run --rm -it --platform "$VERIFY_PLATFORM" -v "$BEE_DIR:/root/.bee" "$IMAGE:$TAG"
 }
 
 cmd_status() {
@@ -181,6 +286,7 @@ case "${1:-}" in
   amd64) cmd_amd64 ;;
   tui) cmd_tui ;;
   audit) cmd_audit ;;
+  shas) cmd_shas ;;
   status) cmd_status ;;
   stop) cmd_stop ;;
   clean) cmd_clean ;;
