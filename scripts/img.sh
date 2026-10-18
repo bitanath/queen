@@ -16,7 +16,10 @@ ROSETTA="${QUEEN_COLIMA_ROSETTA:-1}"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 <build|monitor|verify|amd64|tui|audit|shas|status|stop|clean|all>
+usage: $0 [build|monitor|verify|amd64|tui|audit|shas|status|stop|clean|all]
+
+  (no argument)  the whole pipeline: refuse a dirty tree, build and push
+                 $PLATFORMS, verify both arches, then delete colima
 
   build    require a clean tree, then build $PLATFORMS and push $IMAGE:$TAG
   monitor  tail -f $LOG
@@ -27,11 +30,12 @@ usage: $0 <build|monitor|verify|amd64|tui|audit|shas|status|stop|clean|all>
   audit    prove the image itself carries no credentials
   shas     prove the baked revisions match the gitlinks recorded in HEAD
   status   show the pushed manifest list
-  stop     remove the builder and stop colima
+  stop     remove the builder and stop colima, keeping the cache
   clean    remove the builder and delete colima entirely
-  all      build, verify, stop
+  all      build, verify both arches, then clean up
 
 env:
+  QUEEN_KEEP=1             keep colima after the full pipeline (stop, not delete)
   QUEEN_ALLOW_DIRTY=1      skip the clean-tree check, for a scratch build
   QUEEN_FORCE_PULL=1       drop the local image first, so the pull is really tested
   QUEEN_COLIMA_ROSETTA=0   start colima with binfmt/QEMU instead of Rosetta
@@ -276,10 +280,18 @@ cmd_clean() {
 cmd_all() {
   cmd_build
   cmd_verify
-  cmd_stop
+  cmd_amd64
+  if [ -n "${QUEEN_KEEP:-}" ]; then
+    cmd_stop
+    log "all: done, colima stopped and kept (QUEEN_KEEP set)"
+  else
+    cmd_clean
+    log "all: done, colima deleted"
+  fi
 }
 
 case "${1:-}" in
+  "" | all) cmd_all ;;
   build) cmd_build ;;
   monitor) cmd_monitor ;;
   verify) cmd_verify ;;
@@ -290,6 +302,5 @@ case "${1:-}" in
   status) cmd_status ;;
   stop) cmd_stop ;;
   clean) cmd_clean ;;
-  all) cmd_all ;;
   *) usage ;;
 esac
