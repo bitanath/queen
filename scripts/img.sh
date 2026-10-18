@@ -57,8 +57,8 @@ repo_dirty() {
     printf 'not-a-git-repo'
     return 0
   fi
-  git -C "$path" diff --quiet 2>/dev/null || reasons="${reasons:+$reasons }unstaged"
-  git -C "$path" diff --cached --quiet 2>/dev/null || reasons="${reasons:+$reasons }staged"
+  git -C "$path" diff --quiet --ignore-submodules=all 2>/dev/null || reasons="${reasons:+$reasons }unstaged"
+  git -C "$path" diff --cached --quiet --ignore-submodules=all 2>/dev/null || reasons="${reasons:+$reasons }staged"
   local untracked
   untracked="$(git -C "$path" ls-files --others --exclude-standard 2>/dev/null | head -3)"
   [ -z "$untracked" ] || reasons="${reasons:+$reasons }untracked[$(printf '%s' "$untracked" | tr '\n' ',')]"
