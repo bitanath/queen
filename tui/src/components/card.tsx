@@ -1,13 +1,11 @@
 /* @jsxImportSource @opentui/react */
-// Ported from termcn `opentui/card`; added an optional `height` so a bento row
-// can keep sibling cards the same size.
+// Ported from termcn `opentui/card`;  title inside top border of card haha
 import type { ReactNode } from "react";
 import { useTheme } from "../theme/use-theme";
 import type { BorderStyle } from "../theme/types";
 
 export interface CardProps {
   title?: string;
-  subtitle?: string;
   children: ReactNode;
   footer?: ReactNode;
   borderColor?: string;
@@ -21,7 +19,6 @@ export interface CardProps {
 
 export const Card = ({
   title,
-  subtitle,
   children,
   footer,
   borderColor,
@@ -40,6 +37,7 @@ export const Card = ({
       flexDirection="column"
       borderStyle={borderStyle}
       borderColor={resolvedBorderColor}
+      title={title ? ` ${title} ` : undefined}
       width={width}
       height={height}
       paddingLeft={paddingX}
@@ -47,16 +45,6 @@ export const Card = ({
       paddingTop={paddingY}
       paddingBottom={paddingY}
     >
-      {(title || subtitle) && (
-        <box flexDirection="column" flexShrink={0} paddingBottom={1}>
-          {title && (
-            <text fg={theme.colors.foreground}>
-              <b>{title}</b>
-            </text>
-          )}
-          {subtitle && <text fg={theme.colors.mutedForeground}>{subtitle}</text>}
-        </box>
-      )}
       <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">{children}</box>
       {footer && (
         <box flexDirection="column" marginTop={1} paddingTop={1}>

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Queen: build a self-contained executable from an elthur dylib + a GGUF.
-#
+# An AI generated way to actually build the executable, with some hacks suggested by me.
 #   ./build.sh --list
 #   ./build.sh -m qwen3.5 -p 4b -q q5_k_m --name queen
 #   ./build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
@@ -35,18 +35,18 @@ DYLIB=""
 URL=""
 POSITIONAL=()
 
-# family  params       repo                                        filename template (QUANT substituted)
+# family  params       repo                                          filename template (QUANT substituted)
 catalog() {
   cat <<'EOF'
-falcon-h1  0.5b       tiiuae/Falcon-H1-0.5B-Instruct-GGUF       Falcon-H1-0.5B-Instruct-QUANT.gguf
-falcon-h1  1.5b-deep  tiiuae/Falcon-H1-1.5B-Deep-Instruct-GGUF  Falcon-H1-1.5B-Deep-Instruct-QUANT.gguf
-qwen3.5    0.8b       bartowski/Qwen_Qwen3.5-0.8B-GGUF          Qwen_Qwen3.5-0.8B-QUANT.gguf
-qwen3.5    2b         lmstudio-community/Qwen3.5-2B-GGUF        Qwen3.5-2B-QUANT.gguf
-qwen3.5    4b         unsloth/Qwen3.5-4B-GGUF                    Qwen3.5-4B-QUANT.gguf
-falcon-h1r 0.6b       tiiuae/Falcon-H1-Tiny-R-0.6B-GGUF         Falcon-H1R-0.6B-QUANT.gguf
-gemma4     e4b        unsloth/gemma-4-E4B-it-GGUF                gemma-4-E4B-it-QUANT.gguf
-apertus    8b         andreasmartin/apertus-v1.5-8b-text-Q8_0-GGUF apertus-v1.5-8b-text-quant.gguf
-lfm2.5     2.6b       LiquidAI/LFM2.5-2.6B-GGUF                  LFM2.5-2.6B-QUANT.gguf
+falcon-h1  0.5b       tiiuae/Falcon-H1-0.5B-Instruct-GGUF            Falcon-H1-0.5B-Instruct-QUANT.gguf
+falcon-h1  1.5b-deep  tiiuae/Falcon-H1-1.5B-Deep-Instruct-GGUF       Falcon-H1-1.5B-Deep-Instruct-QUANT.gguf
+qwen3.5    0.8b       bartowski/Qwen_Qwen3.5-0.8B-GGUF               Qwen_Qwen3.5-0.8B-QUANT.gguf
+qwen3.5    2b         lmstudio-community/Qwen3.5-2B-GGUF             Qwen3.5-2B-QUANT.gguf
+qwen3.5    4b         unsloth/Qwen3.5-4B-GGUF                        Qwen3.5-4B-QUANT.gguf
+falcon-h1r 0.6b       tiiuae/Falcon-H1-Tiny-R-0.6B-GGUF              Falcon-H1R-0.6B-QUANT.gguf
+gemma4     e4b        unsloth/gemma-4-E4B-it-GGUF                    gemma-4-E4B-it-QUANT.gguf
+apertus    8b         andreasmartin/apertus-v1.5-8b-text-Q8_0-GGUF   apertus-v1.5-8b-text-quant.gguf
+lfm2.5     2.6b       LiquidAI/LFM2.5-2.6B-GGUF                      LFM2.5-2.6B-QUANT.gguf
 EOF
 }
 

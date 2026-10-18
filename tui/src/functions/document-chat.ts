@@ -1,6 +1,9 @@
-import { Agent, SlidingWindowConversationManager, configureLogging, tool, type JSONSchema } from "@strands-agents/sdk";
+import { Agent, configureLogging, tool, type JSONSchema } from "@strands-agents/sdk";
 
-import { fetchConversation, type QueenDocument } from "../documents";
+import { TokenBudgetConversationManager } from "./conversation-manager";
+import { modelParams } from "./model-params";
+
+import { fetchConversation, resolveDocument, type QueenDocument } from "../documents";
 import { ElthurModel } from "./strands-model";
 
 configureLogging({
@@ -10,10 +13,10 @@ configureLogging({
   error: () => {},
 }); //HACK null out the loggers to prevent corrupting console hoo haa
 
-export const DOC_SYSTEM = `You are Queen, reading one Bee conversation document.
+export const DOC_SYSTEM = `You are Queen, reading one Bee document (a conversation, daily summary, fact, todo, journal or insight).
 You are given its title, subtitle, date and summary. That summary is often enough to answer.
 - Prefer answering from the summary.
-- Call read_document when you need the actual transcript: quotes, who said what, or specifics. With no argument it returns the entire open document.
+- Call read_document when you need the full document (transcript, exact wording, specifics). With no argument it returns the entire open document, so you do NOT need to pass an id.
 - If a request is ambiguous, ask one short clarifying question.
 - Plain Markdown prose. Never invent transcript lines or facts. Keep answers concise.`;
 
@@ -57,26 +60,45 @@ function resultText(block: unknown): string {
 }
 
 function makeReadDocumentTool(doc: QueenDocument) {
+  const openDocument = async (): Promise<string> => {
+    // The open conversation's transcript isn't prefetched, so fetch it on demand.
+    if (doc.kind === "conversation") {
+      try {
+        return (await fetchConversation(doc.id)).markdown;
+      } catch {
+        return doc.markdown;
+      }
+    }
+    return doc.markdown;
+  };
+
   return tool({
     name: "read_document",
     description:
-      "Load the full document of a Bee conversation. Called with no argument it returns the entire open document. Pass a numeric conversation id to read a different one.",
+      "Load the full document for a Bee item. Called with no argument, or with the open document's own id, it returns the entire open document. Pass an id only for a different, explicitly named document (e.g. `todo:123`).",
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Optional numeric conversation id. Omit to read the open document." },
+        id: {
+          type: "string",
+          description: "Optional id of a different document. Omit to read the open document.",
+        },
       },
     } as JSONSchema,
     callback: async (raw: unknown) => {
       const input = (raw ?? {}) as { id?: unknown };
       const requested = String(input.id ?? "").trim();
-      const numeric = Number(requested);
-      if (requested.length === 0 || !Number.isFinite(numeric)) return doc.markdown;
-      if (requested === doc.id || String(numeric) === doc.id) return doc.markdown;
+      const isOpen =
+        requested.length === 0 ||
+        requested === doc.key ||
+        requested === doc.id ||
+        requested === `${doc.kind}:${doc.id}`;
+      if (isOpen) return openDocument();
       try {
-        return (await fetchConversation(numeric)).markdown;
+        return (await resolveDocument(requested)).markdown;
       } catch {
-        return `No document found with id ${requested}.`;
+        // Never error: fall back to the open document.
+        return openDocument();
       }
     },
   });
@@ -88,6 +110,7 @@ function firstTurnPrompt(doc: QueenDocument, question: string): string {
     `Title: ${doc.title}`,
     `Subtitle: ${doc.subtitle}`,
     `Date: ${date}`,
+    `Document: ${doc.key}`,
     "",
     doc.summary,
     "",
@@ -174,7 +197,12 @@ export function createDocumentChat(doc: QueenDocument): DocumentChatSession {
     toolExecutor: "sequential",
     printer: false,
     retryStrategy: null,
-    conversationManager: new SlidingWindowConversationManager({ windowSize: 5, shouldTruncateResults: false }) //NOTE: Keep the last 5 messages plus any tool results
+    conversationManager: new TokenBudgetConversationManager({
+      // Only trim near the 32k window: a fixed small window would invalidate the
+      // engine's prefix cache every turn. pinFirst keeps the document context.
+      budget: Math.floor(modelParams().contextWindow * 0.8),
+      pinFirst: 1,
+    }),
   });
 
   let started = false;

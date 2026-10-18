@@ -1,6 +1,6 @@
 import { adequacy } from "./adequacy";
 import { dailyFactorMeans, factorDrift, nameFactors, runFactor, type FactorModel, type FactorName } from "./factors";
-import { computeConversationMetrics, DIM_NAMES, toConversationInputs, varianceFilter, windowConversation } from "./metrics";
+import { computeConversationMetrics, BASE_DIM_NAMES, toConversationInputs, varianceFilter, windowConversation } from "./metrics";
 import { buildDays, type RealDay } from "./simulate";
 import { DAY_MS, resolveTimeZone, startOfDay } from "./time";
 import { round } from "./text";
@@ -56,6 +56,8 @@ export type AnalyticsResult = {
   period: { startMs: number; endMs: number; label: string };
   days: DayPoint[];
   loadings: Loadings;
+  /** Variance explained by each factor (share of total, 0–1); zeros for the fallback. */
+  variance: number[];
   drift: number[];
   kmo: number | null;
   bartlett: { chi2: number; df: number; p: number } | null;
@@ -64,7 +66,7 @@ export type AnalyticsResult = {
   factorNames: FactorName[];
 };
 
-export type AnalyticsOptions = { realOnly: boolean };
+export type AnalyticsOptions = { realOnly: boolean; forceTopic?: TopicKey };
 
 function fmtAfinn(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(3)}`;
@@ -88,13 +90,33 @@ export function runAnalytics(raw: RawData, opts: AnalyticsOptions, nowMs = Date.
   const convs = toConversationInputs(raw);
   const metrics = convs.map((conv) => computeConversationMetrics(conv, timeZone));
   const windows = convs.flatMap((conv) => windowConversation(conv, timeZone));
+  const n = windows.length;
+
+
+  const topicBase = BASE_DIM_NAMES.length;
+  const topicTotals = TOPIC_KEYS
+    .map((k) => ({ k, v: metrics.reduce((s, m) => s + (m.topicMinutes[k] ?? 0), 0) }))
+    .sort((a, b) => b.v - a.v);
+  const kTopics = Math.max(4, Math.min(10, Math.round((n - topicBase) / 4)));
+  const selectedTopics = topicTotals.slice(0, Math.min(kTopics, TOPIC_KEYS.length)).map((t) => t.k);
+  //HACK: Force the doc's topic into the dims so the analysis is framed around it.
+  if (opts.forceTopic && TOPIC_KEYS.includes(opts.forceTopic) && !selectedTopics.includes(opts.forceTopic)) {
+    if (selectedTopics.length >= kTopics) selectedTopics[selectedTopics.length - 1] = opts.forceTopic;
+    else selectedTopics.push(opts.forceTopic);
+  }
+  const selectedNames = [...BASE_DIM_NAMES, ...selectedTopics.map((t) => `${t}_rate`)];
+  const selectedIdx = [
+    ...BASE_DIM_NAMES.map((_, i) => i),
+    ...selectedTopics.map((t) => topicBase + TOPIC_KEYS.indexOf(t)),
+  ];
+  const matrix = windows.map((w) => selectedIdx.map((j) => w.dims[j] ?? 0));
 
   let model: FactorModel | null = null;
-  let keepDims: string[] = [...DIM_NAMES];
-  if (windows.length >= 4) {
-    const { matrix, keep } = varianceFilter(windows.map((w) => w.dims));
-    model = runFactor(matrix, 5);
-    keepDims = keep.map((j) => DIM_NAMES[j] ?? `d${j}`);
+  let keepDims: string[] = [...selectedNames];
+  if (n >= 4) {
+    const { matrix: filtered, keep } = varianceFilter(matrix);
+    model = runFactor(filtered, 5);
+    keepDims = keep.map((j) => selectedNames[j] ?? `d${j}`);
   }
 
   const realByDay = new Map<string, RealDay>();
@@ -105,7 +127,7 @@ export function runAnalytics(raw: RawData, opts: AnalyticsOptions, nowMs = Date.
     const entry = realByDay.get(key) ?? {
       mins: 0,
       utts: 0,
-      topics: { travel: 0, work: 0, social: 0, food: 0, health: 0, tech: 0 } as Record<TopicKey, number>,
+      topics: Object.fromEntries(TOPIC_KEYS.map((k) => [k, 0])) as Record<TopicKey, number>,
       factors: null,
       hourCounts: new Array<number>(24).fill(0),
       mood: 0,
@@ -135,13 +157,21 @@ export function runAnalytics(raw: RawData, opts: AnalyticsOptions, nowMs = Date.
   const realDays = allDays.filter((d) => d.real).length;
   const simDays = allDays.length - realDays;
 
+  const fallbackFactors = ["F1", "F2", "F3", "F4", "F5"];
   const loadings: Loadings = model
     ? { dims: keepDims, factors: Array.from({ length: model.k }, (_, i) => `F${i + 1}`), values: model.loadings }
-    : { dims: [...DIM_NAMES], factors: ["F1", "F2", "F3", "F4", "F5"], values: REFERENCE_LOADINGS };
+    : {
+        dims: selectedNames,
+        factors: fallbackFactors,
+        values: selectedNames.map((_, i) => REFERENCE_LOADINGS[i] ?? new Array<number>(fallbackFactors.length).fill(0)),
+      };
   const factorNames = nameFactors(loadings.dims, loadings.values, loadings.factors.length);
+  const variance = model
+    ? model.variance
+    : new Array<number>(fallbackFactors.length).fill(0);
 
-  const drift = model ? factorDrift(windows.map((w) => w.dims), 5) : [];
-  const adeq = windows.length >= 4 ? adequacy(windows.map((w) => w.dims)) : null;
+  const drift = model ? factorDrift(matrix, 5) : [];
+  const adeq = n >= 4 ? adequacy(matrix) : null;
   const periodLabel = `${allDays[0]?.label ?? "?"}–${allDays.at(-1)?.label ?? "?"}`;
 
   return {
@@ -149,6 +179,7 @@ export function runAnalytics(raw: RawData, opts: AnalyticsOptions, nowMs = Date.
     days,
     loadings,
     factorNames,
+    variance,
     drift,
     kmo: adeq?.kmo ?? null,
     bartlett: adeq?.bartlett ?? null,

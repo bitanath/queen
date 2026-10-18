@@ -2,7 +2,7 @@ import { beeContext } from "../../utils/bee-com-bridge";
 import { callBeeTextTool } from "@/commands/mcpToolOutput";
 import type { RawConversation, RawDaily, RawData, RawFact, RawTodo, RawUtterance } from "./types";
 
-const SLEEP_MS = 1000;
+const SLEEP_MS = 100;
 let detectedTimeZone: string | undefined;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -23,17 +23,17 @@ function asRecords(value: unknown, key: string): { items: Record<string, unknown
   return { items, next };
 }
 
-async function listAll(tool: string, key: string, base: Record<string, unknown>, limit: number): Promise<Record<string, unknown>[]> {
+async function listAll(tool: string, key: string, base: Record<string, unknown>, limit: number, max: number): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   let cursor: string | null = null;
-  for (let page = 0; page < 20; page += 1) {
+  for (let page = 0; page < 20 && out.length < max; page += 1) {
     const args = cursor ? { ...base, limit, cursor } : { ...base, limit };
     const { items, next } = asRecords(await call(tool, args), key);
     out.push(...items);
-    if (!next) break;
+    if (!next || out.length >= max) break;
     cursor = next;
   }
-  return out;
+  return out.slice(0, max);
 }
 
 function num(v: unknown, fallback = 0): number {
@@ -43,7 +43,7 @@ function num(v: unknown, fallback = 0): number {
 export async function fetchRawAnalyticsData(): Promise<RawData> {
   detectedTimeZone = undefined;
   // Conversations (MCP limit clamps to 20, so paginate).
-  const convRecords = await listAll("bee_list_conversations", "conversations", {}, 20);
+  const convRecords = await listAll("bee_list_conversations", "conversations", {}, 20, 10);
   const conversations: RawConversation[] = convRecords.map((c) => ({
     id: num(c["id"]),
     start_time: num(c["start_time"]),
@@ -69,7 +69,7 @@ export async function fetchRawAnalyticsData(): Promise<RawData> {
       }));
   }
 
-  const dailyRecords = await listAll("bee_list_daily_summaries", "daily_summaries", {}, 30);
+  const dailyRecords = await listAll("bee_list_daily_summaries", "daily_summaries", {}, 30, 30);
   const daily: RawDaily[] = dailyRecords.map((d) => ({
     id: num(d["id"]),
     date_time: num(d["date_time"]),
@@ -77,7 +77,7 @@ export async function fetchRawAnalyticsData(): Promise<RawData> {
     ...(typeof d["summary"] === "string" ? { summary: d["summary"] } : {}),
   }));
 
-  const factRecords = await listAll("bee_list_facts", "facts", { includeUnconfirmed: true }, 50);
+  const factRecords = await listAll("bee_list_facts", "facts", { includeUnconfirmed: true }, 50, 100);
   const facts: RawFact[] = factRecords
     .filter((f) => typeof f["text"] === "string")
     .map((f) => ({
@@ -88,7 +88,7 @@ export async function fetchRawAnalyticsData(): Promise<RawData> {
       ...(typeof f["confirmed"] === "boolean" ? { confirmed: f["confirmed"] } : {}),
     }));
 
-  const todoRecords = await listAll("bee_list_todos", "todos", {}, 50);
+  const todoRecords = await listAll("bee_list_todos", "todos", {}, 50, 100);
   const todos: RawTodo[] = todoRecords
     .filter((t) => typeof t["text"] === "string")
     .map((t) => ({

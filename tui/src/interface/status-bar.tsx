@@ -9,11 +9,11 @@ import { Spacer } from "../components/spacer";
 // leading and trailing Spacer so the whole set is centred, and each chip is
 // centred within its column. Only the single row above is spacing.
 const ITEMS: [string, string][] = [
-  ["enter", "select"],
   ["tab", "focus"],
-  ["ctrl+d", "actions/chat"],
-  ["ctrl+t", "theme"],
+  ["enter", "select"],
   ["esc", "cancel"],
+  ["ctrl+t", "actions/chat"],
+  ["ctrl+d", "theme"],
   ["ctrl+c", "quit"],
 ];
 
@@ -32,7 +32,7 @@ export function StatusBar() {
               paddingRight={1}
             >
               <text fg={theme.colors.secondaryForeground}>
-                <b>{key}</b> · {purpose}
+                <b>{key}</b> · {purpose} {/*NOTE we show only themeing*/}
               </text>
             </box>
           </box>

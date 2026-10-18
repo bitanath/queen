@@ -1,9 +1,10 @@
 import { createRoot } from "@opentui/react";
 import { createCliRenderer } from "@opentui/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { BeeSplash } from "./components/bee-splash";
-import { loadRecentConversations, placeholderDocument, type QueenDocument } from "./documents";
+import { loadRecentDocuments, placeholderDocument, type QueenDocument } from "./documents";
+import { ensureAnalytics } from "./functions/analytics/store";
 import { DOC_SYSTEM } from "./functions/document-chat";
 import { Screen } from "./screen";
 import { ThemeProvider } from "./theme/provider";
@@ -13,26 +14,29 @@ import { warmModel } from "./utils/queen-ffi";
 
 export const QUEEN_VERSION = "v1.2.0";
 
-// Boot flow: read the last five conversations, then hand the main screen a
-// single selected document. The loading screen is the same bee splash used for
-// actions and chat thinking.
+
 function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
   const [docs, setDocs] = useState<QueenDocument[]>([]);
-  const [splash, setSplash] = useState<string | null>("reading your last 5 conversations…");
+  const [splash, setSplash] = useState<string | null>("reading your latest documents…");
   const [loaded, setLoaded] = useState(false);
+
+  const updateDocument = useCallback((doc: QueenDocument) => {
+    setDocs((prev) => prev.map((item) => (item.key === doc.key ? doc : item)));
+  }, []);
 
   useEffect(() => {
     let alive = true;
-    // Prime the weights behind the splash so the first chat turn doesn't pay the
-    // model-load latency. (DOC_SYSTEM matches the system prompt the chat uses.)
+   
     setTimeout(() => {
       try {
         warmModel(DOC_SYSTEM);
       } catch {
-        /* no local model available; chat will surface the error */
+        console.error("No local model available") //XXX this should never happen
       }
     }, 0);
-    loadRecentConversations(5)
+    
+    ensureAnalytics(); //TODO: Factor analysis wee hew
+    loadRecentDocuments({ limit: 20 })
       .then((records) => {
         if (!alive) return;
         setDocs(
@@ -40,8 +44,8 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
             ? records
             : [
                 placeholderDocument(
-                  "No conversations yet",
-                  "# No conversations yet\n\nBee hasn't captured anything recent. Once it does, the last five conversations will appear here.",
+                  "Nothing yet",
+                  "# Nothing yet\n\nBee hasn't captured anything recent. Once it does, the latest documents will appear here.",
                 ),
               ],
         );
@@ -70,7 +74,7 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
     return <BeeSplash words={splash ?? "reading your Bee memory…"} hint="connecting to Bee…" />;
   }
 
-  return <Screen docs={docs} initialPrompt={initialPrompt} />;
+  return <Screen docs={docs} initialPrompt={initialPrompt} onDocumentUpdate={updateDocument} />;
 }
 
 export function render(initialPrompt = "") {

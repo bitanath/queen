@@ -35,8 +35,8 @@ export function useUi(): UiContextValue {
   return useContext(UiContext);
 }
 
-// MARK: - keybindings
-const THEME_KEY = "t";
+// MARK: - keybindings for theme
+const THEME_KEY = "d";
 
 function isCombo(key: { ctrl: boolean; name: string }, name: string): boolean {
   return key.ctrl && key.name === name;
@@ -51,7 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const showToast = useToast();
   const theme = useTheme();
 
-  // Bridge tool execution to the approval modal. Headless runs have no handler.
+  
   useEffect(() => {
     setApprovalHandler(
       (req) =>
@@ -61,7 +61,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         }),
     );
     return () => setApprovalHandler(null);
-  }, []);
+  }, []); //TODO Bridge tool execution to the approval modal. Headless runs have no handler.
 
   const resolveApproval = (ok: boolean, always = false) => {
     if (always && approval) allowAlways(approval.name);
@@ -70,7 +70,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     setApproval(null);
   };
 
-  // Native (NSPasteboard) clipboard with an OSC 52 fallback, built once.
+  
   const clipboard = useMemo(
     () =>
       createClipboard({
@@ -83,9 +83,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => {
       void clipboard.dispose();
     };
-  }, [clipboard]);
+  }, [clipboard]); //TODO copy paste changes
 
-  // Selecting text (mouse drag) auto-copies it and confirms with a toast.
   useSelectionHandler((selection) => {
     const text = selection.getSelectedText();
     if (!text.trim()) return;

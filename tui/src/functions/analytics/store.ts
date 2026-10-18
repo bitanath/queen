@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { AnalyticsResult, AnalyticsOptions } from "./pipeline";
 import { runAnalytics } from "./pipeline";
 import { fetchRawAnalyticsData } from "./fetch";
-import type { RawData } from "./types";
+import type { RawData, TopicKey } from "./types";
 
 export type AnalyticsStatus = "idle" | "loading" | "ready" | "error";
 
@@ -17,6 +17,7 @@ export type AnalyticsState = {
 };
 
 const CACHE_PATH = join(homedir(), ".bee", "queen-analytics.json");
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 let state: AnalyticsState = {
   status: "idle",
@@ -43,12 +44,17 @@ function compute() {
   if (!raw) return;
   const opts: AnalyticsOptions = { realOnly: state.realOnly };
   try {
+    topicCache.clear();
     const result = runAnalytics(raw, opts);
     setState({ result, status: "ready", error: null });
   } catch (e) {
     setState({ status: "error", error: e instanceof Error ? e.message : String(e) });
   }
 }
+
+// Per-topic results (the doc's topic forced into the dims), memoised from the
+// cached raw. Conversation-sourced; facts/insights reuse it framed by topic.
+const topicCache = new Map<string, AnalyticsResult>();
 
 type CacheFile = { fetchedAt: number; raw: RawData };
 
@@ -79,7 +85,7 @@ async function load(forceFetch: boolean) {
     try {
       if (!forceFetch) {
         const cache = readCache();
-        if (cache) {
+        if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
           raw = cache.raw;
           setState({ fetchedAt: cache.fetchedAt });
           compute();
@@ -118,6 +124,23 @@ export function toggleRealOnly(): void {
 
 export function getAnalytics(): AnalyticsState {
   return state;
+}
+
+export function getTopicAnalytics(forceTopic?: TopicKey): AnalyticsResult | null {
+  if (!raw) return null;
+  const key = forceTopic ?? "";
+  const cached = topicCache.get(key);
+  if (cached) return cached;
+  try {
+    const result = runAnalytics(raw, {
+      realOnly: state.realOnly,
+      ...(forceTopic ? { forceTopic } : {}),
+    });
+    topicCache.set(key, result); //FIXME: umm compute Factor analysis once and then cache the results, fit loadings by topic later
+    return result;
+  } catch {
+    return null;
+  }
 }
 
 export const analyticsCachePath = CACHE_PATH;

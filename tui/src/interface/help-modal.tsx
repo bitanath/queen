@@ -27,7 +27,8 @@ export const COMMANDS: [string, string][] = [
 ];
 
 const KEYS: [string, string][] = [
-  ["ctrl+t", "theme switcher"],
+  ["ctrl+d", "theme switcher"],
+  ["ctrl+t", "actions/chat"],
   ["ctrl+p", "switch analytics page"],
   ["ctrl+e", "toggle simulated days"],
   ["ctrl+r", "refresh Bee data"],

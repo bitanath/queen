@@ -99,6 +99,19 @@ export function buildDays(realByDay: Map<string, RealDay>, nowMs: number, timeZo
       social: weekend ? 0.36 : 0.14,
       health: 0.16,
       food: 0.12,
+      medical: 0.04,
+      beauty: 0.04,
+      home: 0.05,
+      shopping: 0.04,
+      money: 0.05,
+      music: 0.04,
+      sport: 0.04,
+      reading: 0.03,
+      transport: 0.04,
+      study: 0.04,
+      pets: 0.02,
+      weather: 0.03,
+      nature: 0.03,
     };
     const sum = TOPIC_KEYS.reduce((s, k) => s + weights[k], 0);
     const topics = {} as Record<TopicKey, number>;

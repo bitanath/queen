@@ -95,6 +95,90 @@ export const FACTOR_WORD: Record<string, string> = {
   non_en_rate: "mixed-lang",
 };
 
+// Human-facing dimension names (title case) for the loadings table.
+const BASE_DIM_DISPLAY: Record<string, string> = {
+  log_words: "Verbosity",
+  q_rate: "Question rate",
+  filler_rate: "Fillers",
+  afinn_mean: "Mood",
+  neg_rate: "Negativity",
+  i_rate: "Self-focus",
+  you_rate: "Other-focus",
+  we_rate: "Joint planning",
+  future_rate: "Future plans",
+  non_en_rate: "Mixed language",
+};
+
+const TOPIC_TITLE: Record<string, string> = {
+  travel: "Travel",
+  work: "Work",
+  social: "Social",
+  food: "Food",
+  health: "Health",
+  medical: "Medical",
+  tech: "Tech",
+  beauty: "Beauty",
+  home: "Home",
+  shopping: "Shopping",
+  money: "Money",
+  music: "Music",
+  sport: "Sport",
+  reading: "Reading",
+  transport: "Transport",
+  study: "Study",
+  pets: "Pets",
+  weather: "Weather",
+  nature: "Nature",
+};
+
+const titleCase = (s: string): string =>
+  s
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+
+/** Descriptive, title-case name for a dim (e.g. `non_en_rate` → "Mixed language"). */
+export function dimDisplay(name: string): string {
+  const base = BASE_DIM_DISPLAY[name];
+  if (base) return base;
+  const topic = /^(.+)_rate$/.exec(name);
+  if (topic) return TOPIC_TITLE[topic[1]!] ?? titleCase(topic[1]!);
+  return titleCase(name.replace(/_(rate|words|mean)$/, ""));
+}
+
+// Plain-English definitions for the non-obvious metrics shown in the footer.
+const BASE_GLOSSARY: Record<string, string> = {
+  log_words: "words spoken per window (verbosity)",
+  q_rate: "share of utterances that are questions",
+  filler_rate: "ums / ahs and filler words",
+  afinn_mean: "average sentiment (mood)",
+  neg_rate: "share of negatively-valenced words",
+  i_rate: "share of \u201cI\u201d pronouns (self-focus)",
+  you_rate: "share of \u201cyou\u201d pronouns (other-focus)",
+  we_rate: "share of \u201cwe\u201d pronouns (joint planning)",
+  future_rate: "future-tense words (plans)",
+  non_en_rate: "words outside common English (code-mixing / ASR noise)",
+};
+
+/** One-line definition for a dim, or null when the name is self-explanatory. */
+export function dimGlossary(name: string): string | null {
+  return BASE_GLOSSARY[name] ?? null;
+}
+
+/** Whether a dim is a topic dimension (used to phrase the prose summary). */
+export function dimIsTopic(name: string): boolean {
+  return /^(.+)_rate$/.test(name) && name in TOPIC_TITLE;
+}
+
+/** Plain noun for a dim, as used in the prose summary (e.g. "Shopping"). */
+export function dimNoun(name: string): string {
+  const topic = /^(.+)_rate$/.exec(name);
+  const t = topic ? TOPIC_TITLE[topic[1]!] : undefined;
+  if (t) return t;
+  return dimDisplay(name);
+}
+
 export type FactorName = { short: string; long: string };
 
 export function nameFactors(dims: string[], values: number[][], k: number): FactorName[] {

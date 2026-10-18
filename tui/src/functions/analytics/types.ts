@@ -57,8 +57,47 @@ export type ConversationInput = {
   utterances: Utterance[];
 };
 
-export type TopicKey = "travel" | "work" | "social" | "food" | "health" | "tech";
-export const TOPIC_KEYS: TopicKey[] = ["travel", "work", "social", "food", "health", "tech"];
+export type TopicKey =
+  | "travel"
+  | "work"
+  | "social"
+  | "food"
+  | "health"
+  | "medical"
+  | "tech"
+  | "beauty"
+  | "home"
+  | "shopping"
+  | "money"
+  | "music"
+  | "sport"
+  | "reading"
+  | "transport"
+  | "study"
+  | "pets"
+  | "weather"
+  | "nature";
+export const TOPIC_KEYS: TopicKey[] = [
+  "travel",
+  "work",
+  "social",
+  "food",
+  "health",
+  "medical",
+  "tech",
+  "beauty",
+  "home",
+  "shopping",
+  "money",
+  "music",
+  "sport",
+  "reading",
+  "transport",
+  "study",
+  "pets",
+  "weather",
+  "nature",
+];
 
 export type ConversationMetrics = {
   id: string;

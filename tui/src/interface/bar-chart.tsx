@@ -22,7 +22,7 @@ const EMPTY_CHAR = "░";
 
 const pad = (str: string, length: number): string => {
   if (str.length >= length) return str.slice(0, length);
-  return `${str} `.repeat(length - str.length);
+  return str + " ".repeat(length - str.length);
 };
 
 const padStart = (str: string, length: number): string => {

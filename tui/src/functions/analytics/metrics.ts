@@ -12,11 +12,13 @@ import type {
 } from "./types";
 import { TOPIC_KEYS } from "./types";
 
-const DIM_NAMES = [
+const BASE_DIM_NAMES = [
   "log_words", "q_rate", "filler_rate", "afinn_mean", "neg_rate", "i_rate", "you_rate",
-  "we_rate", "future_rate", "travel_rate", "food_rate", "tech_rate", "social_rate", "non_en_rate",
+  "we_rate", "future_rate", "non_en_rate",
 ] as const;
-export { DIM_NAMES };
+
+const DIM_NAMES: string[] = [...BASE_DIM_NAMES, ...TOPIC_KEYS.map((k) => `${k}_rate`)];
+export { DIM_NAMES, BASE_DIM_NAMES };
 
 /** Rate of tokens that are not common English words (code-mixing / ASR garble). */
 function nonEnglishCount(tokensList: string[]): number {
@@ -160,11 +162,8 @@ export function windowConversation(conv: ConversationInput, timeZone?: string): 
       pct(all, YOU_W, wn),
       wePct,
       pct(all, FUT_W, wn),
-      pct(all, TOPIC_LEXICONS.travel, wn),
-      pct(all, TOPIC_LEXICONS.food, wn),
-      pct(all, TOPIC_LEXICONS.tech, wn),
-      pct(all, TOPIC_LEXICONS.social, wn),
       nonEnPct,
+      ...TOPIC_KEYS.map((k) => pct(all, TOPIC_LEXICONS[k], wn)),
     ];
 
     const mid = w[Math.floor(w.length / 2)]!;
