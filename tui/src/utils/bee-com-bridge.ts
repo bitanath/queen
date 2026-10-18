@@ -17,12 +17,7 @@ import { changedCommand } from "@/commands/changed";
 import type { TableSpec } from "./table-spec";
 import type { AnswerView, SearchResult, TranscriptLine } from "./answer-view";
 
-import type {
-  LoginOptions,
-  PairingOptions,
-  PollPairingOptions,
-  SearchBeeOptions,
-} from "./interfaces-types";
+import type { PairingOptions, PollPairingOptions } from "./interfaces-types";
 
 const BEE_CLI_SHA = process.env.QUEEN_BEE_SHA ?? "dev"; //NOTE Pinned bee-cli submodule (`git -C bee-cli rev-parse HEAD`); "dev" when run unbundled.
 const ELTHUR_SHA = process.env.QUEEN_ELTHUR_SHA ?? "dev"; //NOTE elthur revision this build used (usually latest main); "dev" when run unbundled.
@@ -362,52 +357,6 @@ function parseProfile(payload: unknown): Record<string, unknown> {
   };
 }
 
-export async function searchBee(opts: SearchBeeOptions): Promise<CommandResult> {
-  const ctx = await beeContext(opts.env ?? "prod");
-  const data = await callBeeTextTool(ctx, "bee_search", { query: opts.query, limit: opts.limit ?? 5 });
-  const results = parseSearchResults(data);
-  return {
-    text: `Bee Search · ${results.length} ${results.length === 1 ? "result" : "results"}`,
-    view: { title: `Search · ${opts.query}`, results },
-  };
-}
-
-type RawSearchResult = {
-  id?: unknown;
-  type?: unknown;
-  score?: unknown;
-  title_snippet?: unknown;
-  snippet?: unknown;
-  summary?: unknown;
-  created_at?: unknown;
-};
-
-function parseSearchResults(data: unknown): SearchResult[] {
-  const root = data && typeof data === "object" ? (data as { results?: unknown }) : {};
-  const list = Array.isArray(root.results) ? root.results : [];
-  const nowMs = Date.now();
-  return list
-    .map((item): SearchResult | null => {
-      if (!item || typeof item !== "object") return null;
-      const r = item as RawSearchResult;
-      const title =
-        typeof r.title_snippet === "string"
-          ? r.title_snippet
-          : typeof r.summary === "string"
-            ? r.summary
-            : "";
-      return {
-        id: typeof r.id === "string" ? r.id : String(r.id ?? ""),
-        type: typeof r.type === "string" ? r.type : "result",
-        score: typeof r.score === "number" ? r.score : 0,
-        when: humanDate(r.created_at, nowMs),
-        title: oneLine(title.replace(/^#{1,6}\s+/, "")),
-        snippet: oneLine((typeof r.snippet === "string" ? r.snippet : "").replace(/^#{1,6}\s+/, "")),
-      };
-    })
-    .filter((result): result is SearchResult => result !== null);
-}
-
 const DETAIL_TOOLS: Record<string, string> = {
   fact: "bee_get_fact",
   daily: "bee_get_daily_summary",
@@ -545,35 +494,6 @@ export async function captureConsole(fn: () => Promise<void>): Promise<string> {
   return lines.join("\n").trim();
 }
 
-// List-style Bee tools all share this shape: call the tool, tabulate the record.
-async function beeList(
-  env: Environment,
-  tool: string,
-  title: string,
-  input: Record<string, unknown> = {},
-): Promise<CommandResult> {
-  const ctx = await beeContext(env);
-  const data = await callBeeTextTool(ctx, tool, input);
-  return tableResult(title, buildTable(data));
-}
-
-export const getActivity = (env: Environment = "prod") =>
-  beeList(env, "bee_get_recent_activity", "Recent Activity");
-export const listConversations = (env: Environment = "prod") =>
-  beeList(env, "bee_list_conversations", "Conversations");
-export const listDailySummaries = (env: Environment = "prod") =>
-  beeList(env, "bee_list_daily_summaries", "Daily Summaries");
-export const listFacts = (env: Environment = "prod") =>
-  beeList(env, "bee_list_facts", "Facts");
-export const getInsights = (env: Environment = "prod") =>
-  beeList(env, "bee_get_insights", "Insights");
-export const listJournals = (env: Environment = "prod") =>
-  beeList(env, "bee_list_voice_notes", "Journals");
-export const getLocations = (env: Environment = "prod", current = false) =>
-  current
-    ? beeList(env, "bee_get_current_location", "Current Location")
-    : beeList(env, "bee_get_location_clusters", "Location Clusters");
-
 /** Recent conversations with utterances (runs the bee-cli `now` command). */
 export async function getNow(env: Environment = "prod"): Promise<string> {
   const ctx = await beeContext(env);
@@ -585,17 +505,6 @@ export async function getChanged(env: Environment = "prod", cursor?: string): Pr
   const ctx = await beeContext(env);
   const args = cursor ? ["--cursor", cursor] : [];
   return captureConsole(() => changedCommand.run(args, ctx));
-}
-
-export async function loginWithToken(opts: LoginOptions): Promise<string> {
-  const clean = opts.token.trim();
-  if (!clean) throw new Error("Missing token.");
-  const env = opts.env ?? "prod";
-  const ctx = await beeContext(env);
-  const apiCtx: CommandContext = { ...ctx, client: createDeveloperClient(env) };
-  const user = await fetchClientMe(apiCtx, clean);
-  await saveToken(env, clean);
-  return [user.first_name, user.last_name].filter(Boolean).join(" ");
 }
 
 export type PairingStart = {

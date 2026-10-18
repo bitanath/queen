@@ -6,7 +6,7 @@ import {
   renderSparkline,
   type DitherColor,
   type DitherVariant,
-} from "../components/sparkline-utils";
+} from "../utils/sparkline-utils";
 
 export interface SparklineProps {
   data: number[];

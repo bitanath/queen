@@ -39,6 +39,14 @@ export type QueenDocument = {
 export type RecentDocumentsOptions = {
   kinds?: DocumentKind[];
   limit?: number;
+  /** Epoch-ms lower bound (inclusive) on each document's recency. */
+  from?: number;
+  /** Epoch-ms upper bound (inclusive) on each document's recency. */
+  to?: number;
+  /** Case-insensitive substring match over a document's title, summary and body. */
+  query?: string;
+  /** Final ordering. Default keeps the dashboard's stable alphabetical order. */
+  sort?: "alpha" | "recency";
 };
 
 type DocFields = Omit<QueenDocument, "key" | "kind" | "id">;
@@ -458,7 +466,6 @@ export async function loadRecentDocuments(options: RecentDocumentsOptions = {}):
   const kinds = options.kinds ?? DOCUMENT_KINDS;
   const ctx = await beeContext("prod");
   const dated: { doc: QueenDocument; recency: number }[] = [];
-
   for (const kind of kinds) {
     const spec = KIND_SPECS[kind];
     if (!spec) continue;
@@ -480,11 +487,23 @@ export async function loadRecentDocuments(options: RecentDocumentsOptions = {}):
     }
   }
 
-  return dated
+  const query = options.query?.trim().toLowerCase();
+  const filtered = dated.filter((entry) => {
+    if (options.from !== undefined && entry.recency < options.from) return false;
+    if (options.to !== undefined && entry.recency > options.to) return false;
+    if (query && query.length > 0) {
+      const hay = `${entry.doc.title}\n${entry.doc.summary}\n${entry.doc.body}`.toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+
+  const selected = filtered
     .sort((a, b) => b.recency - a.recency)
     .slice(0, limit)
-    .map((entry) => entry.doc)
-    .sort((a, b) => a.title.localeCompare(b.title));
+    .map((entry) => entry.doc);
+
+  return options.sort === "recency" ? selected : selected.sort((a, b) => a.title.localeCompare(b.title));
 }
 
 

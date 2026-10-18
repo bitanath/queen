@@ -1,15 +1,17 @@
 /* @jsxImportSource @opentui/react */
 import { SyntaxStyle, TextAttributes, type KeyEvent, type TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTION_CATALOG, actionsForDocument, type QueenAction } from "./functions/action/catalog";
+import { executeAction } from "./functions/action/execute";
 import { BeeSplash } from "./components/bee-splash";
 import { Card } from "./components/card";
 import { Divider } from "./components/divider";
 import { FactorBars } from "./components/factor-bars";
 import { Markdown } from "./components/markdown";
 import { matrixLayout, Matrix } from "./components/matrix";
+import { Modal } from "./components/modal";
 import { Stack } from "./components/stack";
 import { ThinkingBlock } from "./components/thinking-block";
 import { ToolCall } from "./components/tool-call";
@@ -17,11 +19,14 @@ import { fetchConversation, topicMeta, type QueenDocument } from "./documents";
 import { factorMatrix } from "./functions/analytics/factor-view";
 import { getTopicAnalytics } from "./functions/analytics/store";
 import { useAnalytics } from "./functions/analytics/use-analytics";
-import { createDocumentChat, type ChatToolInfo, type DocumentChatSession } from "./functions/document-chat";
+import { createChatSession, type ChatToolInfo, type ChatSession } from "./functions/chat";
+import type { DocFilter, UiBridge } from "./functions/ui-bridge";
+import { LoginCard } from "./interface/login-card";
+import { useToast } from "./interface/toaster";
 import { heuristicSpeakers } from "./utils/diarize";
 import { lastThink, stripThinking } from "./utils/stream-status";
 import { useTheme } from "./theme/use-theme";
-import { AppShell } from "./userinterface";
+import { useUi } from "./userinterface";
 
 type SidebarMode = "actions" | "chat";
 type Focus = "docs" | "actions" | "chat" | "center";
@@ -36,8 +41,6 @@ type ChatMessage = {
   promptTokens?: number;
   ttftMs?: number;
 };
-
-const DUMMY_ACTION_MS = 6000;
 
 const TRANSCRIPT_SPINNER = ["◐", "◓", "◑", "◒"]; //FIXME This is one way to do it
 
@@ -59,10 +62,12 @@ export function Screen({
   docs,
   initialPrompt = "",
   onDocumentUpdate,
+  onRefresh,
 }: {
   docs: QueenDocument[];
   initialPrompt?: string;
   onDocumentUpdate?: (doc: QueenDocument) => void;
+  onRefresh?: (filter?: DocFilter) => Promise<QueenDocument[]>;
 }) {
   const theme = useTheme();
   const renderer = useRenderer();
@@ -81,7 +86,7 @@ export function Screen({
   const [chatBusy, setChatBusy] = useState(false);
   const chatCancel = useRef(false);
   const chatId = useRef(1);
-  const chatSession = useRef<DocumentChatSession | null>(null);
+  const chatSession = useRef<ChatSession | null>(null);
   const inputRef = useRef<TextareaRenderable | null>(null);
 
   const doc = docs.find((item) => item.key === selectedKey) ?? docs[0];
@@ -176,16 +181,62 @@ export function Screen({
     setSplash(null);
   };
 
-  const runDummyAction = (action: QueenAction) => {
-    if (!doc) return;
-    clearSplash();
-    setSplash(`running ${action.label}…`);
-    splashTimer.current = setTimeout(() => {
-      splashTimer.current = null;
-      setUsed((prev) => new Set(prev).add(`${doc.key}:${action.id}`));
-      setSplash(null);
-    }, DUMMY_ACTION_MS);
-  };
+  const toast = useToast();
+  const { openAnswer } = useUi();
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [clarify, setClarify] = useState<{
+    question: string;
+    options: string[];
+    resolve: (choice: string) => void;
+  } | null>(null);
+
+  const refreshAndSelect = useCallback(
+    async (filter?: DocFilter) => {
+      if (!onRefresh) return;
+      const records = await onRefresh(filter);
+      if (records[0]) setSelectedKey(records[0].key);
+    },
+    [onRefresh],
+  );
+
+  const bridge = useMemo<UiBridge>(
+    () => ({
+      showDocuments: (filter) => void refreshAndSelect(filter),
+      refreshDocuments: () => void onRefresh?.(),
+      openAnswer: (view) => openAnswer(view),
+      toast: (message, variant) => toast(message, variant ? { variant } : undefined),
+      login: () => setLoginOpen(true),
+      clarify: (question, options) => new Promise<string>((resolve) => setClarify({ question, options, resolve })),
+    }),
+    [refreshAndSelect, onRefresh, openAnswer, toast],
+  );
+
+  const runAction = useCallback(
+    async (action: QueenAction) => {
+      if (!doc) return;
+      if (action.resource === "login") {
+        setLoginOpen(true);
+        return;
+      }
+      clearSplash();
+      setSplash(`running ${action.label}…`);
+      try {
+        const outcome = await executeAction(action, doc);
+        if (outcome.refresh === true) void onRefresh?.();
+        else if (outcome.refresh) await refreshAndSelect(outcome.refresh);
+        if (outcome.view) openAnswer(outcome.view);
+        else if (outcome.markdown) openAnswer({ title: outcome.title, markdown: outcome.markdown });
+        if (outcome.toast) toast(outcome.toast);
+        setUsed((prev) => new Set(prev).add(`${doc.key}:${action.id}`));
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), { variant: "error" });
+      } finally {
+        splashTimer.current = null;
+        setSplash(null);
+      }
+    },
+    [doc, onRefresh, refreshAndSelect, openAnswer, toast],
+  );
 
   useEffect(() => {
     return () => {
@@ -206,7 +257,7 @@ export function Screen({
     if (startedPrompt.current || !initialPrompt.trim() || !doc) return;
     startedPrompt.current = true;
     const action = pickPromptAction(initialPrompt);
-    if (action) runDummyAction(action);
+    if (action) void runAction(action);
   }, [doc, initialPrompt]);
 
   const updateMessage = (id: number, patch: Partial<ChatMessage>) => {
@@ -244,7 +295,7 @@ export function Screen({
 
     let session = chatSession.current;
     if (session === null || session.key !== doc.key) {
-      session = createDocumentChat(doc);
+      session = await createChatSession(doc, bridge);
       chatSession.current = session;
     }
 
@@ -324,6 +375,18 @@ export function Screen({
     return <BeeSplash words={splashWords} hint="esc to cancel" onCancel={clearSplash} />;
   }
 
+  if (loginOpen) {
+    return (
+      <LoginCard
+        onConnected={() => {
+          setLoginOpen(false);
+          void onRefresh?.();
+        }}
+        onCancel={() => setLoginOpen(false)}
+      />
+    );
+  }
+
   if (!doc) {
     return (
       <box width="100%" height="100%" justifyContent="center" alignItems="center">
@@ -339,8 +402,7 @@ export function Screen({
     : null;
 
   return (
-    <AppShell>
-      <box width="100%" height="100%" flexDirection="row" gap={1} paddingLeft={1} paddingRight={1}>
+    <box width="100%" height="100%" flexDirection="row" gap={1} paddingLeft={1} paddingRight={1}>
       <box flexGrow={1} minWidth={0} flexDirection="column">
         <Card
           title={doc.title}
@@ -474,7 +536,7 @@ export function Screen({
                 onChange={(index) => setActionIndex(index)}
                 onSelect={(_index, option) => {
                   const action = actions.find((item) => item.id === option?.value);
-                  if (action) runDummyAction(action);
+                  if (action) void runAction(action);
                 }}
               />
             ) : (
@@ -553,7 +615,31 @@ export function Screen({
           </Card>
         </Stack>
       </box>
+
+      {clarify && (
+        <Modal
+          title="clarify"
+          width={72}
+          height={10}
+          onClose={() => {
+            clarify.resolve("");
+            setClarify(null);
+          }}
+        >
+          <box flexDirection="column" gap={1}>
+            <text fg={theme.colors.foreground}>{clarify.question}</text>
+            <select
+              focused
+              flexGrow={1}
+              options={clarify.options.map((option) => ({ name: option, value: option, description: "" }))}
+              onSelect={(_index, option) => {
+                clarify.resolve(String(option?.value ?? ""));
+                setClarify(null);
+              }}
+            />
+          </box>
+        </Modal>
+      )}
       </box>
-    </AppShell>
   );
 }

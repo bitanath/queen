@@ -29,5 +29,5 @@
       "@/*": ["../bee-cli/sources/*"]
     }
   },
-  "include": ["src", "index.tsx", "patchification.ts", "vendor.d.ts"]
+  "include": ["src", "test", "index.tsx", "patchification.ts", "vendor.d.ts"]
 }

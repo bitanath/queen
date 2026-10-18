@@ -1,5 +1,3 @@
-// External (non-TUI) commands. Queen dispatches these before the document
-// screen, renders a real OpenTUI card into the terminal scrollback, and exits.
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -155,7 +153,7 @@ const version: CommandRun = async () => ({
   ],
 });
 
-// Live commands are handled separately because they need the renderer.
+
 const staticCommands: Record<string, CommandRun> = {
   status,
   today,
@@ -165,13 +163,9 @@ const staticCommands: Record<string, CommandRun> = {
   logout: logoutCommand,
   ping,
   version,
-};
+}; //TODO Live commands are handled separately because they need the renderer
 
 const LIVE_COMMANDS = new Set(["sync", "login"]);
-
-export function externalCommandNames(): string[] {
-  return [...Object.keys(staticCommands), ...LIVE_COMMANDS];
-}
 
 function isExternalCommand(name: string): boolean {
   return name in staticCommands || LIVE_COMMANDS.has(name);
@@ -196,14 +190,11 @@ async function renderSpec(spec: CardSpec): Promise<void> {
   }
 }
 
-// `bee sync` owns a live MultiProgress renderer that redraws a block of task
-// rows in place. Under OpenTUI's capture mode every redraw would be committed
-// as its own scrollback line, so we let it drive the terminal directly (real
-// progress), then commit a single summary card once it finishes.
+
 async function runSync(argv: string[]): Promise<void> {
   const { syncCommand } = await import("@/commands/sync");
   const ctx = await beeContext("prod");
-  const outputDir = defaultSyncOutput();
+  const outputDir = defaultSyncOutput(); //FIXME special casing bee sync to only take up one line per actual sync item
   const args = argv.includes("--output") ? argv : ["--output", outputDir, ...argv];
   await syncCommand.run(args, ctx);
   await renderSpec({
@@ -236,10 +227,7 @@ async function runLoginLive(renderer: CliRenderer, argv: string[]): Promise<void
   });
 }
 
-/**
- * If the prompt starts with an external command, run it, print its card, and
- * return true. Returns false for anything that should fall through to the TUI.
- */
+
 export async function runExternalCommand(prompt: string): Promise<boolean> {
   const trimmed = prompt.trim();
   if (!trimmed) return false;

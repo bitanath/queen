@@ -31,6 +31,8 @@ const { symbols } = dlopen(libPath, {
   stream_free: { args: ["ptr"], returns: "void" },
   stream_hit_length_limit: { args: ["ptr"], returns: "bool" },
   stream_prompt_tokens: { args: ["ptr"], returns: "usize" },
+  stream_prefill_tokens: { args: ["ptr"], returns: "usize" },
+  stream_generated_tokens: { args: ["ptr"], returns: "usize" },
   stream_ttft_nanoseconds: { args: ["ptr"], returns: "u64" },
   free_string: { args: ["ptr"], returns: "void" },
 });
@@ -130,6 +132,16 @@ export function freeStream(handle: Pointer): void {
 /** Number of prompt tokens the last generation had to prefill. */
 export function promptTokensOf(handle: Pointer): number {
   return Number(symbols.stream_prompt_tokens(handle));
+}
+
+/** Number of prompt tokens actually run through the prefill kernels (cache misses). */
+export function prefillTokensOf(handle: Pointer): number {
+  return Number(symbols.stream_prefill_tokens(handle));
+}
+
+/** Number of tokens the last generation decoded (excludes the prompt). */
+export function generatedTokensOf(handle: Pointer): number {
+  return Number(symbols.stream_generated_tokens(handle));
 }
 
 /** Time to first token (prefill) in milliseconds for the last generation. */

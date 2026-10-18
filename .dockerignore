@@ -1,0 +1,12 @@
+**/.git
+**/.github
+**/node_modules
+**/.DS_Store
+**/.zig-cache
+**/zig-out
+elthur/outputs
+tui/dist
+tui/libelthur.dylib
+models/LFM2.5-230M-Q8_0.gguf
+models/Qwen3.5-2B-Q5_K_M.gguf
+*.webarchive

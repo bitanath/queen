@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Queen: build a self-contained executable from an elthur dylib + a GGUF.
 # An AI generated way to actually build the executable, with some hacks suggested by me.
-#   ./build.sh --list
-#   ./build.sh -m qwen3.5 -p 4b -q q5_k_m --name queen
-#   ./build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
-#   ./build.sh [model.gguf] [--name queen-small]
+#   ./scripts/build.sh --list
+#   ./scripts/build.sh -m qwen3.5 -p 4b -q q5_k_m --name queen
+#   ./scripts/build.sh -m falcon-h1 --dylib /path/to/libelthur.dylib
+#   ./scripts/build.sh [model.gguf] [--name queen-small]
 #
 # Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5
 # Single-model defaults: --model falcon-h1, --params <lowest listed>, --quant q8_0.
@@ -21,7 +21,7 @@
 #   HF_TOKEN          bearer token, for gated/rate-limited downloads
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TUI="$ROOT/tui"
 BEE_CLI="$ROOT/bee-cli"
 MODELS_DIR="${QUEEN_MODELS_DIR:-$ROOT/models}"

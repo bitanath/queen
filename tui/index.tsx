@@ -6,6 +6,9 @@ if (process.env.QUEEN_ROLE === "bee-mcp") {
     import("@/context"),
   ]);
   await serveMcp(await createCommandContext("prod"));
+} else if (process.env.QUEEN_ROLE === "watch-all") {
+  const { serveWatchAll } = await import("./src/functions/watch-all");
+  await serveWatchAll();
 } else {
   const [{ render }, { runSmoke, smokeRequested }] = await Promise.all([
     import("./src/app"),

@@ -3,7 +3,7 @@
 // cell (e.g. per week), colour-coded. Bar length ∝ |value|; solid = positive,
 // shaded = negative.
 import { useTheme } from "../theme/use-theme";
-import { DITHER_PALETTE, type DitherColor } from "../components/dither-area-utils";
+import { DITHER_PALETTE, type DitherColor } from "../utils/dither-area-utils";
 import { displayWidth, padDisplay, truncateDisplay } from "../libraries/table-format";
 
 export interface GroupedBarsProps {

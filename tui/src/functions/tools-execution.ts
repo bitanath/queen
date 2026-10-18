@@ -1,48 +1,40 @@
-// Agent assembly for queen. Agent *specs* live in ./agents (pure data); this file
-// turns each spec into a Strands Agent, wires the shared kit, the sequential
-// executor (elthur runs one session at a time), and the approval gate, then
-// exposes it to the orchestrator as a tool.
+// Agent assembly for Queen. Agent *specs* live in ./agents (pure data); this file
+// turns each spec into a Strands Agent, wires the shared local tools, the
+// sequential executor (elthur runs one session at a time), the approval gate,
+// and maps Bee tool activity onto the UI bridge so display actions refresh the
+// document panels.
 
 import {
   Agent,
+  AfterToolCallEvent,
+  BeforeInvocationEvent,
   BeforeToolCallEvent,
   ModelStreamUpdateEvent,
   SlidingWindowConversationManager,
   tool,
   type JSONSchema,
   type Tool,
-  type ToolContext,
 } from "@strands-agents/sdk";
 
 import { ElthurModel } from "./strands-model";
-import { ORCHESTRATOR_PROMPT, modelParams } from "./model-params";
-import {
-  COMMON_TOOLS,
-  bash,
-  beeMeTool,
-  beeSyncTool,
-  fileEditor,
-  httpRequest,
-  toolRisk,
-  webFetch,
-} from "./tool-definitions";
+import { orchestratorPrompt, SUB_AGENTS, type AgentSpec } from "./agents";
+import { TokenBudgetConversationManager } from "./conversation-manager";
+import { beeMeTool, httpRequest, toolRisk, webFetch } from "./tool-definitions";
+import { webSearch } from "./web-find";
+import { automationRisk, automationTools } from "./automation";
 import { beeToolNames, beeToolsFor } from "../libraries/bee-mcp";
 import { isLoggedIn } from "../utils/bee-com-bridge";
-import { AGENT_SPECS, type AgentSpec } from "./agents";
 import { requestApproval } from "../utils/approval-broker";
+import { modelParams } from "./model-params";
+import type { UiBridge } from "./ui-bridge";
+import type { DocumentKind } from "../documents";
 
-/** Every specialist's model, keyed by agent name — used by the dashboard. */
-export const agentModels = new Map<string, ElthurModel>();
-
-/**
- * Live feed from a specialist while it runs, so the dashboard can show its
- * thinking and result instead of treating the subagent as a black box.
- */
-export type SpecialistEvent =
+/** Live feed from a worker while it runs, so the UI can show what is happening. */
+export type AgentActivity =
   | { kind: "delta"; agent: string; text: string }
-  | { kind: "tool"; agent: string; tool: string };
+  | { kind: "tool"; agent: string; name: string };
 
-export type SpecialistObserver = (event: SpecialistEvent) => void;
+export type ActivityObserver = (event: AgentActivity) => void;
 
 /** Pull the text payload out of a raw `modelContentBlockDeltaEvent`. */
 function textDeltaOf(event: unknown): string | null {
@@ -53,47 +45,94 @@ function textDeltaOf(event: unknown): string | null {
   return null;
 }
 
-/** Local (non-MCP) tools referenced by AgentSpec.toolNames. */
-const LOCAL_TOOLS: Record<string, Tool> = {
-  bee_sync: beeSyncTool,
-  bee_me: beeMeTool,
-  file_editor: fileEditor,
-  http_request: httpRequest,
-  web_fetch: webFetch,
-  bash,
-};
-
-/** Resolve a spec's tool names from the Bee MCP catalog plus the local tools. */
-function resolveTools(names: readonly string[]): Tool[] {
-  const mcp = new Map(beeToolsFor(names).map((tool) => [tool.name, tool]));
-  return names
-    .map((name) => mcp.get(name) ?? LOCAL_TOOLS[name])
-    .filter((tool): tool is Tool => tool !== undefined);
+/** Local (non-Bee) tools referenced by AgentSpec.localTools. */
+function localToolMap(): Map<string, Tool> {
+  const map = new Map<string, Tool>();
+  map.set("bee_me", beeMeTool);
+  map.set("web_fetch", webFetch);
+  map.set("http_request", httpRequest);
+  map.set("web_search", webSearch);
+  for (const automation of automationTools()) map.set(automation.name, automation);
+  return map;
 }
 
-/** Strands-side context management, tuned per model family. */
-function makeConversationManager(): SlidingWindowConversationManager {
-  const p = modelParams();
-  return new SlidingWindowConversationManager({
-    windowSize: p.windowSize,
-    shouldTruncateResults: true,
-    proactiveCompression:
-      p.compressionThreshold !== undefined
-        ? { compressionThreshold: p.compressionThreshold }
-        : false,
+function resolveTools(spec: AgentSpec, local: Map<string, Tool>): Tool[] {
+  const tools: Tool[] = [];
+  if (spec.beeTools) tools.push(...beeToolsFor(beeToolNames()));
+  for (const name of spec.localTools ?? []) {
+    const tool = local.get(name);
+    if (tool) tools.push(tool);
+  }
+  return tools;
+}
+
+/** Workers get a short sliding window; they are single-call and disposable. */
+function makeWorkerManager(): SlidingWindowConversationManager {
+  return new SlidingWindowConversationManager({ windowSize: 20, shouldTruncateResults: true });
+}
+
+/** The orchestrator keeps a token budget so the engine's prefix KV cache keeps hitting. */
+function makeOrchestratorManager(): TokenBudgetConversationManager {
+  return new TokenBudgetConversationManager({
+    budget: Math.floor(modelParams().contextWindow * 0.8),
+    pinFirst: 1,
   });
 }
 
-/** Gate tool calls: Bee tools require a login first, then medium/high risk calls
- *  go behind the approval modal. */
-function installToolGates(agent: Agent): void {
+/** Bee tools that write: after one succeeds the panels are refreshed. */const WRITE_TOOLS = new Set([
+  "bee_create_fact",
+  "bee_update_fact",
+  "bee_delete_fact",
+  "bee_create_todo",
+  "bee_update_todo",
+  "bee_complete_todo",
+  "bee_delete_todo",
+  "bee_accept_todo_suggestion",
+  "bee_dismiss_todo_suggestion",
+]);
+
+/** Bee read tools mapped to the document kinds they should display. */
+const DISPLAY_KINDS: Record<string, DocumentKind[]> = {
+  bee_list_todos: ["todo"],
+  bee_list_facts: ["fact"],
+  bee_search_facts: ["fact"],
+  bee_get_fact: ["fact"],
+  bee_list_daily_summaries: ["daily"],
+  bee_get_daily_summary: ["daily"],
+  bee_get_insights: ["insight"],
+  bee_get_insight: ["insight"],
+  bee_list_voice_notes: ["journal"],
+  bee_search_voice_notes: ["journal"],
+  bee_get_voice_note: ["journal"],
+  bee_get_location_clusters: ["location"],
+  bee_get_recent_visits: ["location"],
+  bee_get_current_location: ["location"],
+  bee_list_conversations: ["conversation"],
+  bee_get_conversation: ["conversation"],
+  bee_get_conversation_transcript: ["conversation"],
+  bee_get_related_conversations: ["conversation"],
+  bee_get_today: ["conversation", "daily"],
+  bee_get_recent_activity: ["conversation", "daily", "journal", "todo"],
+};
+
+/** Risk of a tool: Bee/local tables first, then the automation provider. */
+function riskOf(name: string): ReturnType<typeof toolRisk> {
+  const base = toolRisk(name);
+  return base !== "low" ? base : automationRisk(name) ?? "low";
+}
+
+/** Gate tool calls: Bee tools need a login, then medium/high risk asks for approval. */
+function installToolGates(agent: Agent, bridge?: UiBridge): void {
   agent.addHook(BeforeToolCallEvent, async (event) => {
+    if (event.cancel) return; // already cancelled by a budget/loop guard — don't prompt
     const name = event.toolUse.name;
-    if (name.startsWith("bee_") && !(await isLoggedIn())) {
-      event.cancel = "Bee not logged in, please ask the user to login to continue";
+    const beeBacked = name.startsWith("bee_") || name === "bee";
+    if (beeBacked && !(await isLoggedIn())) {
+      bridge?.login();
+      event.cancel = "You are not logged in.";
       return;
     }
-    const risk = toolRisk(name);
+    const risk = riskOf(name);
     if (risk === "low") return;
     const approved = await requestApproval({
       name,
@@ -104,146 +143,155 @@ function installToolGates(agent: Agent): void {
   });
 }
 
-/** Build a specialist agent and expose it as a tool (fresh context per call). */
-export function defineBeeAgent(
-  spec: AgentSpec,
-  model: ElthurModel,
-  includeCommon = true,
-  onSpecialist?: SpecialistObserver,
-): Tool {
-  agentModels.set(spec.name, model);
-  const tools = resolveTools(spec.toolNames);
-  const agent = new Agent({
-    name: spec.name,
-    description: spec.description,
-    model,
-    systemPrompt: spec.systemPrompt,
-    tools: includeCommon ? [...tools, ...COMMON_TOOLS] : tools,
-    toolExecutor: "sequential",
-    printer: false,
-    retryStrategy: null,
-    conversationManager: makeConversationManager(),
-  });
-  installToolGates(agent);
-  if (onSpecialist) {
-    // Forward the specialist's model deltas and tool calls to the dashboard.
-    agent.addHook(ModelStreamUpdateEvent, (event) => {
-      const text = textDeltaOf(event.event);
-      if (text) onSpecialist({ kind: "delta", agent: spec.name, text });
-    });
-    agent.addHook(BeforeToolCallEvent, (event) => {
-      onSpecialist({ kind: "tool", agent: spec.name, tool: event.toolUse.name });
-    });
-  }
-  return agent.asTool({ name: spec.name, description: spec.description });
-}
+const WORKER_NAMES = new Set(["bee", "mac", "net"]);
 
-/** Bee MCP tools that no named specialist claims (they go to `misc`). */
-export function getUnassignedBeeTools(): string[] {
-  const assigned = new Set(
-    AGENT_SPECS.filter((spec) => spec.name !== "misc").flatMap((spec) => spec.toolNames),
-  );
-  return beeToolNames().filter((name) => !assigned.has(name));
-}
-
-/** Header counts: explicitly assigned vs auto-assigned (misc) Bee tools. */
-export function getToolAssignment(): { assigned: number; unassigned: number } {
-  const total = beeToolNames().length;
-  const unassigned = getUnassignedBeeTools().length;
-  return { assigned: total - unassigned, unassigned };
-}
-
-/** Pull plain text out of a tool result's content blocks. */
-function extractToolText(content: readonly { type: string; text?: string; json?: unknown }[]): string {
-  return content
-    .map((item) =>
-      item.type === "textBlock"
-        ? (item.text ?? "")
-        : item.type === "jsonBlock"
-          ? JSON.stringify(item.json)
-          : "",
-    )
-    .filter((s) => s.length > 0)
-    .join("\n");
-}
-
-const OFFLINE_MSG =
-  "You're logged out of Bee, so I can't pull live data right now. " +
-  "Run /login in this chat to connect your account, and I'll fetch it live. " +
-  "Meanwhile, ask me anything and I'll help from general knowledge.";
+/** Tool-call budgets per invocation (small models spiral without them). */
+const WORKER_TOOL_CAP = 4;
+const ORCHESTRATOR_TOOL_CAP = 3;
 
 /**
- * The orchestrator's only tool: a router that delegates to a specialist. One
- * compact tool (plus a short prompt) keeps the orchestrator's prefill tiny; the
- * specialists themselves are the same AgentAsTool instances as before.
- *
- * The specialist's answer is returned as the tool result; the orchestrator then
- * reads it and writes the final reply. Bee-backed specialists are pre-checked
- * against login so a logged-out request fails fast.
+ * The orchestrator may consult each worker at most once per invocation. Small
+ * local models otherwise loop (call net five times in a row); cancelling a
+ * repeat forces them to answer with what they already have.
  */
-function makeRouteTool(specialists: Map<string, Tool>, beeBacked: Set<string>): Tool {
+function installSinglePassGuard(agent: Agent): void {
+  let called = new Set<string>();
+  agent.addHook(BeforeInvocationEvent, () => {
+    called = new Set();
+  });
+  agent.addHook(BeforeToolCallEvent, (event) => {
+    const name = event.toolUse.name;
+    if (!WORKER_NAMES.has(name)) return;
+    if (called.has(name)) {
+      event.cancel = `You already consulted the ${name} agent this turn. Answer the user now with what you have.`;
+      return;
+    }
+    called.add(name);
+  });
+}
+
+/**
+ * Hard cap on tool calls within one invocation. Small local models spiral (a
+ * worker calling the same read tool five times); after `cap` calls we cancel and
+ * tell it to answer with what it has. Reset per invocation.
+ */
+function installToolCap(agent: Agent, cap: number): void {
+  let used = 0;
+  agent.addHook(BeforeInvocationEvent, () => {
+    used = 0;
+  });
+  agent.addHook(BeforeToolCallEvent, (event) => {
+    used += 1;
+    if (used > cap) {
+      event.cancel = "Tool budget exhausted for this turn. Answer the user now with what you already have.";
+    }
+  });
+}
+
+/** Refresh the document panels when a Bee worker reads or writes. */
+function installPanelRefresh(agent: Agent, bridge?: UiBridge): void {
+  if (!bridge) return;
+  agent.addHook(AfterToolCallEvent, (event) => {
+    if (event.error) return;
+    const name = event.toolUse.name;
+    if (WRITE_TOOLS.has(name)) {
+      bridge.refreshDocuments();
+      return;
+    }
+    const kinds = DISPLAY_KINDS[name];
+    if (kinds) bridge.showDocuments({ kinds });
+  });
+}
+
+function installActivity(agent: Agent, name: string, onActivity: ActivityObserver): void {
+  agent.addHook(BeforeToolCallEvent, (event) => {
+    onActivity({ kind: "tool", agent: name, name: event.toolUse.name });
+  });
+  agent.addHook(ModelStreamUpdateEvent, (event) => {
+    const text = textDeltaOf(event.event);
+    if (text) onActivity({ kind: "delta", agent: name, text });
+  });
+}
+
+// ModelStreamUpdateEvent is imported above with the other hook classes.
+
+/**
+ * The one non-worker tool the orchestrator holds: a control valve for genuine
+ * ambiguity (Bee data vs a host action). It asks the user once and returns their
+ * choice. Not a capability — it can't read or write anything.
+ */
+function makeClarifyTool(bridge?: UiBridge): Tool {
   return tool({
-    name: "route",
-    description: "Route the request to the right Bee specialist and return its answer.",
+    name: "clarify",
+    description:
+      "Ask the user ONE short question when a request is genuinely ambiguous between their Bee data and a host/OS action (e.g. a Bee todo vs an Apple Reminder), then act on their answer. Do not use it when the intent is already clear.",
     inputSchema: {
       type: "object",
       properties: {
-        specialist: {
-          type: "string",
-          enum: AGENT_SPECS.map((spec) => spec.name),
-          description: "Which specialist should handle the request.",
+        question: { type: "string", description: "The question to ask." },
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description: "The choices to offer (e.g. [\"Bee\", \"Mac\"]).",
         },
-        input: { type: "string", description: "The natural language request for the specialist." },
       },
-      required: ["specialist", "input"],
+      required: ["question"],
     } as JSONSchema,
-    callback: async (raw: unknown, context: ToolContext) => {
-      const { specialist, input } = (raw ?? {}) as { specialist?: unknown; input?: unknown };
-      const target = specialists.get(String(specialist ?? ""));
-      if (!target) throw new Error(`Unknown specialist: ${String(specialist ?? "")}`);
-      // Fail fast when a Bee-backed specialist is invoked while logged out.
-      if (beeBacked.has(target.name) && !(await isLoggedIn())) {
-        return OFFLINE_MSG;
-      }
-      const generator = target.stream({
-        ...context,
-        toolUse: { ...context.toolUse, name: target.name, input: { input: String(input ?? "") } },
-      });
-      let step = await generator.next();
-      while (!step.done) step = await generator.next();
-      return extractToolText(step.value.content);
+    callback: async (raw: unknown) => {
+      const input = (raw ?? {}) as { question?: unknown; options?: unknown };
+      const question = String(input.question ?? "").trim();
+      const options = Array.isArray(input.options) ? input.options.map(String) : ["Bee", "Mac"];
+      if (!bridge) return `Ask the user: ${question || "(clarify)"} — options: ${options.join(" / ")}`;
+      return bridge.clarify(question || "Where should I do this?", options);
     },
   });
 }
 
 /**
- * The orchestrator. Exposes a single routing tool so its prefill stays tiny
- * regardless of the 35 Bee tools; the specialists are untouched.
+ * The orchestrator. It has no tools of its own — only the three workers, which
+ * Strands wraps as tools. `await ensureBeeMcp()` before calling this so the Bee
+ * worker resolves its tools.
  */
 export function createQueenAgent(
   model: ElthurModel = new ElthurModel(),
-  onSpecialist?: SpecialistObserver,
+  bridge?: UiBridge,
+  onActivity?: ActivityObserver,
 ): Agent {
-  const unassigned = getUnassignedBeeTools();
-  const beeBacked = new Set<string>();
-  const specialists = new Map<string, Tool>();
-  for (const spec of AGENT_SPECS) {
-    const isMisc = spec.name === "misc";
-    // `misc` gets whatever Bee tools no named specialist claimed, and no COMMON_TOOLS.
-    const effective = isMisc ? { ...spec, toolNames: unassigned } : spec;
-    if (effective.toolNames.some((name) => name.startsWith("bee_"))) beeBacked.add(spec.name);
-    specialists.set(spec.name, defineBeeAgent(effective, new ElthurModel(), !isMisc, onSpecialist));
+  const local = localToolMap();
+  const workers: Agent[] = [];
+  for (const spec of SUB_AGENTS) {
+    const tools = resolveTools(spec, local);
+    if (tools.length === 0) continue; // e.g. the mac worker on an unsupported platform
+    const worker = new Agent({
+      name: spec.name,
+      description: spec.description,
+      model: new ElthurModel(),
+      systemPrompt: spec.systemPrompt,
+      tools,
+      toolExecutor: "sequential",
+      printer: false,
+      retryStrategy: null,
+      conversationManager: makeWorkerManager(),
+    });
+    installToolCap(worker, WORKER_TOOL_CAP);
+    installToolGates(worker, bridge);
+    if (spec.name === "bee") installPanelRefresh(worker, bridge);
+    if (onActivity) installActivity(worker, spec.name, onActivity);
+    workers.push(worker);
   }
 
-  const agent = new Agent({
+  const orchestrator = new Agent({
     model,
-    systemPrompt: ORCHESTRATOR_PROMPT,
-    tools: [makeRouteTool(specialists, beeBacked)],
+    systemPrompt: orchestratorPrompt,
+    tools: [...workers, makeClarifyTool(bridge)],
     toolExecutor: "sequential",
     printer: false,
     retryStrategy: null,
-    conversationManager: makeConversationManager(),
+    conversationManager: makeOrchestratorManager(),
   });
-  installToolGates(agent);
-  return agent;
+  installToolCap(orchestrator, ORCHESTRATOR_TOOL_CAP);
+  installSinglePassGuard(orchestrator);
+  installToolGates(orchestrator, bridge);
+  if (onActivity) installActivity(orchestrator, "queen", onActivity);
+  return orchestrator;
 }

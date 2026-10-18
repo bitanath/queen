@@ -1,8 +1,3 @@
-// Bee MCP client. Spawns the Queen binary (compiled or dev) in its "bee-mcp"
-// role as a stdio MCP server, lists the Bee tools, and hands the agents trimmed,
-// timeout-wrapped versions of them. The server side of the role split lives at
-// the top of index.tsx. Prod only — no staging.
-
 import {
   McpClient,
   TextBlock,
@@ -49,31 +44,27 @@ let toolsByName = new Map<string, Tool>();
 let rawTools = new Map<string, McpToolLike>();
 let starting: Promise<void> | null = null;
 
-/** The Bee tools owned by the given names (same contract as the old beeToolsFor). */
 export function beeToolsFor(names: readonly string[]): Tool[] {
   const allow = new Set(names);
   return [...toolsByName.values()].filter((tool) => allow.has(tool.name));
 }
 
-/** Every Bee tool name exposed by the MCP server. */
+
 export function beeToolNames(): string[] {
   return [...toolsByName.keys()];
 }
 
-/** Raw pass-through call (smoke checks); agents use the trimmed wrappers. */
 export async function invokeBeeTool(name: string, input: Record<string, unknown> = {}): Promise<unknown> {
   const tool = rawTools.get(name);
   if (!client || !tool) throw new Error(`bee tool not available: ${name}`);
   return client.callTool(tool, input as unknown as JSONValue);
 }
 
-/** Spawn the Bee MCP server and load its tools. Idempotent. */
 export function startBeeMcp(): Promise<void> {
   if (starting) return starting;
   starting = (async () => {
     setState({ status: "connecting", error: null });
     try {
-      // build.sh --define's QUEEN_BEE_SHA in the compiled binary; undefined in dev.
       const compiled = typeof process.env.QUEEN_BEE_SHA === "string";
       const entry = compiled ? undefined : new URL("../../index.tsx", import.meta.url).pathname;
       const transport = new StdioClientTransport({
@@ -95,6 +86,14 @@ export function startBeeMcp(): Promise<void> {
   return starting;
 }
 
+export async function ensureBeeMcp(): Promise<void> {
+  await startBeeMcp();
+  const current = getBeeMcpState();
+  if (current.status !== "connected") {
+    throw new Error(current.error ?? `Bee MCP ${current.status}`);
+  }
+}
+
 export async function stopBeeMcp(): Promise<void> {
   const current = client;
   client = null;
@@ -109,9 +108,8 @@ export async function stopBeeMcp(): Promise<void> {
   }
 }
 
-// MARK: - trimming
 
-// Aggressive: keep only the first sentence of the tool description.
+//FIXME: Aggressive: keep only the first sentence of the tool description.
 function trimDescription(text: string): string {
   const clean = text.replace(/\s+/g, " ").trim();
   const first = clean.split(/(?<=\.)\s/, 1)[0] ?? clean;
@@ -119,7 +117,7 @@ function trimDescription(text: string): string {
   return base.length > DESC_CAP ? `${base.slice(0, DESC_CAP - 3).trimEnd()}...` : base;
 }
 
-// Aggressive: drop every nested `description` key, keep schema structure.
+//FIXME: Aggressive: drop every nested `description` key, keep schema structure.
 function stripDescriptions(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripDescriptions);
   if (value && typeof value === "object") {
@@ -149,6 +147,7 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 }
 
 /**
+ * XXX claude recommended changes need to test these
  * Wraps an McpTool with a trimmed spec (token savings) and a hard 30s timeout
  * that reports back to the model as "tool called timeout". Streaming is
  * delegated so content mapping (text/image/resource) stays the SDK's.

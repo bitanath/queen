@@ -24,10 +24,10 @@ submodules first:
 
 .. code-block:: bash
 
-   ./build_all.sh                              # queen
-   ./build.sh --list
+   ./scripts/build_all.sh                      # queen
+   ./scripts/build.sh --list
 
-``./build_all.sh`` builds the queen executable with the LFM2.5-2.6B model:
+``./scripts/build_all.sh`` builds the queen executable with the LFM2.5-2.6B model:
 
 +----------------------+--------------------+------------------+
 | artifact             | model              | notes            |

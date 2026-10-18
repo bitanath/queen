@@ -4,13 +4,7 @@ import { useMemo } from "react";
 import { TextAttributes } from "@opentui/core";
 
 import { useTheme } from "../theme/use-theme";
-import {
-  DITHER_PALETTE,
-  renderDitherArea,
-  type AreaVariant,
-  type DitherCell,
-  type DitherColor,
-} from "../components/dither-area-utils";
+import { DITHER_PALETTE, renderDitherArea, type AreaVariant, type DitherCell, type DitherColor, } from "../utils/dither-area-utils";
 
 export interface DitherAreaChartProps {
   data: { label?: string; value: number }[];

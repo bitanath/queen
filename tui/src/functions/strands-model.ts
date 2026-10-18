@@ -1,5 +1,5 @@
 import {type BaseModelConfig, type JSONSchema, type Message, type ModelStreamEvent, type StreamOptions, type SystemPrompt, type StopReason, type ToolSpec} from "@strands-agents/sdk"
-import { beginStream, freeStream, pollStream, promptTokensOf, streamTruncated, toolCallsOf, ttftMsOf, type EngineMessage, } from "../utils/queen-ffi";
+import { beginStream, freeStream, pollStream, promptTokensOf, generatedTokensOf, prefillTokensOf, streamTruncated, toolCallsOf, ttftMsOf, type EngineMessage, } from "../utils/queen-ffi";
 import { Model } from "@strands-agents/sdk";
 import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
 import { stripToolMarkup } from "./tool-definitions";
@@ -114,7 +114,11 @@ export class ElthurModel extends Model<ElthurModelConfig> {
   lastContextUsed = 0;
   lastContextLimit = CONTEXT_WINDOW;
   lastPromptTokens = 0;
+  lastPrefillTokens = 0;
+  lastGeneratedTokens = 0;
   lastTtftMs = 0;
+  lastDecodeMs = 0;
+  lastTokPerSec = 0;
 
   constructor(config: ElthurModelConfig = {}) {
     super();
@@ -193,10 +197,18 @@ export class ElthurModel extends Model<ElthurModelConfig> {
 
       const truncated = cancelled ? false : streamTruncated(handle);
       const calls = cancelled ? [] : toolCallsOf(handle);
+      const totalMs = Date.now() - started;
       this.lastTruncated = truncated;
       this.lastMaxTokens = maxTokens;
       this.lastPromptTokens = cancelled ? 0 : promptTokensOf(handle);
+      this.lastPrefillTokens = cancelled ? 0 : prefillTokensOf(handle);
+      this.lastGeneratedTokens = cancelled ? 0 : generatedTokensOf(handle);
       this.lastTtftMs = cancelled ? 0 : ttftMsOf(handle);
+      this.lastDecodeMs = Math.max(0, totalMs - this.lastTtftMs);
+      this.lastTokPerSec =
+        this.lastDecodeMs > 0
+          ? Math.round((this.lastGeneratedTokens / this.lastDecodeMs) * 1000 * 10) / 10
+          : 0;
 
       const stamp = Date.now().toString(36);
       let index = 0;
@@ -222,7 +234,12 @@ export class ElthurModel extends Model<ElthurModelConfig> {
           contextUsed: this.lastContextUsed,
           contextLimit: this.lastContextLimit,
           promptTokens: this.lastPromptTokens,
+          prefillTokens: this.lastPrefillTokens,
+          generatedTokens: this.lastGeneratedTokens,
           ttftMs: this.lastTtftMs,
+          decodeMs: this.lastDecodeMs,
+          totalMs,
+          tokPerSec: this.lastTokPerSec,
         },
       };
     } finally {
