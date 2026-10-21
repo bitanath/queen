@@ -21,6 +21,7 @@ RUN case "${BUILDARCH}" in \
  && tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1 \
  && rm -f /tmp/zig.tar.xz
 COPY elthur /src/elthur
+
 RUN case "${TARGETARCH}" in \
       amd64) zig_target=x86_64-linux-gnu ;; \
       arm64) zig_target=aarch64-linux-gnu ;; \

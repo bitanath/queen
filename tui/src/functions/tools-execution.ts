@@ -1,42 +1,25 @@
-// Agent assembly for Queen. Agent *specs* live in ./agents (pure data); this file
-// turns each spec into a Strands Agent, wires the shared local tools, the
-// sequential executor (elthur runs one session at a time), the approval gate,
-// and maps Bee tool activity onto the UI bridge so display actions refresh the
-// document panels.
+import { Agent, AfterToolCallEvent, BeforeInvocationEvent, BeforeToolCallEvent, ModelStreamUpdateEvent, SlidingWindowConversationManager, tool, type JSONSchema, type Tool, } from "@strands-agents/sdk";
 
-import {
-  Agent,
-  AfterToolCallEvent,
-  BeforeInvocationEvent,
-  BeforeToolCallEvent,
-  ModelStreamUpdateEvent,
-  SlidingWindowConversationManager,
-  tool,
-  type JSONSchema,
-  type Tool,
-} from "@strands-agents/sdk";
-
-import { ElthurModel } from "./strands-model";
+import { beeMeTool, httpRequest, toolRisk, webFetch } from "./tool-definitions";
 import { orchestratorPrompt, SUB_AGENTS, type AgentSpec } from "./agents";
 import { TokenBudgetConversationManager } from "./conversation-manager";
-import { beeMeTool, httpRequest, toolRisk, webFetch } from "./tool-definitions";
-import { webSearch } from "./web-find";
-import { automationRisk, automationTools } from "./automation";
+import { planRoute, type RoutePlan } from "./agents/orchestrator";
 import { beeToolNames, beeToolsFor } from "../libraries/bee-mcp";
-import { isLoggedIn } from "../utils/bee-com-bridge";
+import { automationRisk, automationTools } from "./automation";
+import { CHAT_SYSTEM_HIGH, modelParams } from "./model-params";
 import { requestApproval } from "../utils/approval-broker";
-import { modelParams } from "./model-params";
-import type { UiBridge } from "./ui-bridge";
+import { isLoggedIn } from "../utils/bee-com-bridge";
 import type { DocumentKind } from "../documents";
+import { ElthurModel } from "./strands-model";
+import type { UiBridge } from "./ui-bridge";
+import { webSearch } from "./web-find";
 
-/** Live feed from a worker while it runs, so the UI can show what is happening. */
 export type AgentActivity =
   | { kind: "delta"; agent: string; text: string }
   | { kind: "tool"; agent: string; name: string };
 
 export type ActivityObserver = (event: AgentActivity) => void;
 
-/** Pull the text payload out of a raw `modelContentBlockDeltaEvent`. */
 function textDeltaOf(event: unknown): string | null {
   const e = event as { type?: string; delta?: { type?: string; text?: string } };
   if (e?.type === "modelContentBlockDeltaEvent" && e.delta?.type === "textDelta") {
@@ -45,7 +28,6 @@ function textDeltaOf(event: unknown): string | null {
   return null;
 }
 
-/** Local (non-Bee) tools referenced by AgentSpec.localTools. */
 function localToolMap(): Map<string, Tool> {
   const map = new Map<string, Tool>();
   map.set("bee_me", beeMeTool);
@@ -66,12 +48,15 @@ function resolveTools(spec: AgentSpec, local: Map<string, Tool>): Tool[] {
   return tools;
 }
 
-/** Workers get a short sliding window; they are single-call and disposable. */
+export function toolsForWorker(name: string): Tool[] {
+  const spec = SUB_AGENTS.find((item) => item.name === name);
+  return spec ? resolveTools(spec, localToolMap()) : [];
+}
+
 function makeWorkerManager(): SlidingWindowConversationManager {
   return new SlidingWindowConversationManager({ windowSize: 20, shouldTruncateResults: true });
 }
 
-/** The orchestrator keeps a token budget so the engine's prefix KV cache keeps hitting. */
 function makeOrchestratorManager(): TokenBudgetConversationManager {
   return new TokenBudgetConversationManager({
     budget: Math.floor(modelParams().contextWindow * 0.8),
@@ -79,7 +64,7 @@ function makeOrchestratorManager(): TokenBudgetConversationManager {
   });
 }
 
-/** Bee tools that write: after one succeeds the panels are refreshed. */const WRITE_TOOLS = new Set([
+const WRITE_TOOLS = new Set([
   "bee_create_fact",
   "bee_update_fact",
   "bee_delete_fact",
@@ -91,7 +76,6 @@ function makeOrchestratorManager(): TokenBudgetConversationManager {
   "bee_dismiss_todo_suggestion",
 ]);
 
-/** Bee read tools mapped to the document kinds they should display. */
 const DISPLAY_KINDS: Record<string, DocumentKind[]> = {
   bee_list_todos: ["todo"],
   bee_list_facts: ["fact"],
@@ -115,16 +99,14 @@ const DISPLAY_KINDS: Record<string, DocumentKind[]> = {
   bee_get_recent_activity: ["conversation", "daily", "journal", "todo"],
 };
 
-/** Risk of a tool: Bee/local tables first, then the automation provider. */
-function riskOf(name: string): ReturnType<typeof toolRisk> {
+export function riskOf(name: string): ReturnType<typeof toolRisk> {
   const base = toolRisk(name);
-  return base !== "low" ? base : automationRisk(name) ?? "low";
+  return base !== "low" ? base : automationRisk(name) ?? "low"; //FIXME: we need to show the approval dialog box for edit/create requests on MacOS
 }
 
-/** Gate tool calls: Bee tools need a login, then medium/high risk asks for approval. */
 function installToolGates(agent: Agent, bridge?: UiBridge): void {
   agent.addHook(BeforeToolCallEvent, async (event) => {
-    if (event.cancel) return; // already cancelled by a budget/loop guard — don't prompt
+    if (event.cancel) return; //NOTE: already cancelled by a budget/loop guard — don't prompt
     const name = event.toolUse.name;
     const beeBacked = name.startsWith("bee_") || name === "bee";
     if (beeBacked && !(await isLoggedIn())) {
@@ -145,11 +127,11 @@ function installToolGates(agent: Agent, bridge?: UiBridge): void {
 
 const WORKER_NAMES = new Set(["bee", "mac", "net"]);
 
-/** Tool-call budgets per invocation (small models spiral without them). */
-const WORKER_TOOL_CAP = 4;
+const WORKER_TOOL_CAP = 4; //FIXME: small model tool caps to prevent overloading
 const ORCHESTRATOR_TOOL_CAP = 3;
 
 /**
+ * FIXME: Claude suggested
  * The orchestrator may consult each worker at most once per invocation. Small
  * local models otherwise loop (call net five times in a row); cancelling a
  * repeat forces them to answer with what they already have.
@@ -171,6 +153,7 @@ function installSinglePassGuard(agent: Agent): void {
 }
 
 /**
+ * FIXME: Claude suggested
  * Hard cap on tool calls within one invocation. Small local models spiral (a
  * worker calling the same read tool five times); after `cap` calls we cancel and
  * tell it to answer with what it has. Reset per invocation.
@@ -188,7 +171,6 @@ function installToolCap(agent: Agent, cap: number): void {
   });
 }
 
-/** Refresh the document panels when a Bee worker reads or writes. */
 function installPanelRefresh(agent: Agent, bridge?: UiBridge): void {
   if (!bridge) return;
   agent.addHook(AfterToolCallEvent, (event) => {
@@ -213,12 +195,11 @@ function installActivity(agent: Agent, name: string, onActivity: ActivityObserve
   });
 }
 
-// ModelStreamUpdateEvent is imported above with the other hook classes.
 
 /**
- * The one non-worker tool the orchestrator holds: a control valve for genuine
- * ambiguity (Bee data vs a host action). It asks the user once and returns their
- * choice. Not a capability — it can't read or write anything.
+ * FIXME: Orchestrator to have a clarify tool for user intent
+ * A control valve for genuine ambiguity (Bee data vs a host action). 
+ * It asks the user once and returns their choice.
  */
 function makeClarifyTool(bridge?: UiBridge): Tool {
   return tool({
@@ -247,18 +228,12 @@ function makeClarifyTool(bridge?: UiBridge): Tool {
   });
 }
 
-/**
- * The orchestrator. It has no tools of its own — only the three workers, which
- * Strands wraps as tools. `await ensureBeeMcp()` before calling this so the Bee
- * worker resolves its tools.
- */
-export function createQueenAgent(
-  model: ElthurModel = new ElthurModel(),
+function buildWorkers(
   bridge?: UiBridge,
   onActivity?: ActivityObserver,
-): Agent {
+): Array<{ name: string; agent: Agent }> {
   const local = localToolMap();
-  const workers: Agent[] = [];
+  const workers: Array<{ name: string; agent: Agent }> = [];
   for (const spec of SUB_AGENTS) {
     const tools = resolveTools(spec, local);
     if (tools.length === 0) continue; // e.g. the mac worker on an unsupported platform
@@ -277,8 +252,56 @@ export function createQueenAgent(
     installToolGates(worker, bridge);
     if (spec.name === "bee") installPanelRefresh(worker, bridge);
     if (onActivity) installActivity(worker, spec.name, onActivity);
-    workers.push(worker);
+    workers.push({ name: spec.name, agent: worker });
   }
+  return workers;
+}
+
+export type RoutedQueen = {
+  plan: (prompt: string, docKind?: string | null) => RoutePlan;
+  worker: (name: "bee" | "mac" | "net") => Agent | undefined;
+  chat: () => Agent;
+};
+
+/**
+ *  Deterministic routing. `planRoute` settles the class without a model turn to save time
+ *
+ *   direct   -> a tool-less chat agent answers
+ *   clarify  -> the caller asks the user once, then dispatches the choice
+ *   worker   -> that worker agent runs the turn directly
+ *
+ */
+export function createRoutedQueenAgent( model: ElthurModel = new ElthurModel(), bridge?: UiBridge, onActivity?: ActivityObserver): RoutedQueen {
+  const workers = buildWorkers(bridge, onActivity);
+  const byName = new Map(workers.map((entry) => [entry.name, entry.agent]));
+  let chat: Agent | null = null;
+
+  const chatAgent = (): Agent => {
+    if (chat === null) {
+      chat = new Agent({
+        model,
+        systemPrompt: CHAT_SYSTEM_HIGH,
+        tools: [],
+        toolExecutor: "sequential",
+        printer: false,
+        retryStrategy: null,
+        conversationManager: makeOrchestratorManager(),
+      });
+      if (onActivity) installActivity(chat, "queen", onActivity);
+    }
+    return chat;
+  };
+
+  return {
+    plan: (prompt, docKind) => planRoute(prompt, docKind),
+    worker: (name) => byName.get(name),
+    chat: chatAgent,
+  };
+}
+
+//TODO: Orchestrator must orchestrate
+export function createQueenAgent(model: ElthurModel = new ElthurModel(), bridge?: UiBridge, onActivity?: ActivityObserver): Agent {
+  const workers = buildWorkers(bridge, onActivity).map((entry) => entry.agent);
 
   const orchestrator = new Agent({
     model,

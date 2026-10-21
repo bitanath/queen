@@ -1,15 +1,7 @@
 /* @jsxImportSource @opentui/react */
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Tool } from "@strands-agents/sdk";
-
-import {
-  beeToolsFor,
-  getBeeMcpState,
-  startBeeMcp,
-  stopBeeMcp,
-  subscribeBeeMcp,
-  type BeeMcpState,
-} from "./libraries/bee-mcp";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { beeToolsFor, getBeeMcpState, startBeeMcp, stopBeeMcp, subscribeBeeMcp, type BeeMcpState, } from "./libraries/bee-mcp";
 
 export type McpContextValue = BeeMcpState & {
   ready: boolean;

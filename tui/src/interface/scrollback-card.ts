@@ -149,3 +149,49 @@ export async function writeCard(renderer: CliRenderer, spec: CardSpec): Promise<
   await renderer.idle();
   await new Promise((resolve) => setTimeout(resolve, 150));
 }
+
+export function plainCard(spec: CardSpec): string {
+  const lines: string[] = [spec.title];
+  if (spec.subtitle) {
+    lines.push(spec.subtitle, "");
+  }
+  for (const section of spec.sections) {
+    switch (section.kind) {
+      case "heading":
+      case "text":
+        lines.push(section.text);
+        break;
+      case "keyValues":
+        for (const item of section.items) lines.push(`${item.key}: ${item.value}`);
+        break;
+      case "markdown":
+        lines.push(section.content);
+        break;
+      case "table": {
+        const widths = section.columns.map((column, index) =>
+          Math.max(column.length, ...section.rows.map((row) => String(row[index] ?? "").length)),
+        );
+        const rowText = (cells: (string | number)[]) =>
+          cells
+            .map((cell, index) => String(cell ?? "").padEnd(widths[index] ?? 0))
+            .join("  ")
+            .trimEnd();
+        lines.push(rowText(section.columns));
+        lines.push(widths.map((width) => "-".repeat(width)).join("  "));
+        for (const row of section.rows) lines.push(rowText(row));
+        break;
+      }
+      case "gauge":
+        lines.push(
+          `${section.label}: ${Math.round(section.ratio * 100)}%${section.detail ? ` (${section.detail})` : ""}`,
+        );
+        break;
+      case "progress":
+        lines.push(`${section.label}: ${Math.round(section.ratio * 100)}%`);
+        break;
+    }
+    lines.push("");
+  }
+  if (spec.footer) lines.push(spec.footer);
+  return lines.join("\n").trimEnd();
+}

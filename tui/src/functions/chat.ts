@@ -1,8 +1,7 @@
 import { Agent, configureLogging } from "@strands-agents/sdk";
 
 import { ElthurModel } from "./strands-model";
-import { createQueenAgent } from "./tools-execution";
-import { routeHint } from "./agents/orchestrator";
+import { createRoutedQueenAgent } from "./tools-execution";
 import { ensureBeeMcp } from "../libraries/bee-mcp";
 import type { QueenDocument } from "../documents";
 import type { UiBridge } from "./ui-bridge";
@@ -153,17 +152,27 @@ async function streamAgent(
 export async function createChatSession(doc: QueenDocument, bridge: UiBridge): Promise<ChatSession> {
   await ensureBeeMcp();
   const model = new ElthurModel({ systemPrompt: undefined, maxTokens: 1024 });
-  const agent = createQueenAgent(model, bridge);
+  const routed = createRoutedQueenAgent(model, bridge);
 
   let started = false;
   return {
     key: doc.key,
     send: async (question, callbacks) => {
-      // Deterministic routing hint for the live question (system prefix stays cached).
-      const hint = routeHint(question, doc.kind);
       const base = started ? question : firstTurnPrompt(doc, question);
-      const prompt = hint ? `${hint}\n\n${base}` : base;
-      await streamAgent(agent, () => prompt, question, callbacks);
+      // Classify the question itself; the first-turn document is background,
+      // not part of the intent.
+      const plan = routed.plan(question, doc.kind);
+
+      if (plan.kind === "clarify") {
+        // Deterministic: ask once, then dispatch the choice. No model turn.
+        const choice = await bridge.clarify("Where should I do this?", ["Bee", "Mac"]);
+        const target = /mac|apple|reminder|note|calendar|computer|host/i.test(choice) ? "mac" : "bee";
+        await streamAgent(routed.worker(target) ?? routed.chat(), () => base, question, callbacks);
+      } else {
+        const agent =
+          plan.kind === "worker" ? routed.worker(plan.worker) ?? routed.chat() : routed.chat();
+        await streamAgent(agent, () => base, question, callbacks);
+      }
       started = true;
     },
   };

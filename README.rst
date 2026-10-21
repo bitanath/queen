@@ -22,6 +22,11 @@ submodules first:
 
    git submodule update --init --recursive
 
+The elthur dylib is built with ``zig build dylib``. It is a pure engine and
+needs no GGUF at compile time; the model enters only when the build appends it
+to the executable. Rebuilding the engine therefore never requires a model
+download.
+
 .. code-block:: bash
 
    ./scripts/build_all.sh                      # queen
@@ -52,6 +57,26 @@ Run
 .. code-block:: bash
 
    ./tui/dist/queen
+
+One-shot CLI
+------------
+
+A bare ``queen`` opens the TUI. Any argument — or piped stdin — runs a single
+command, prints one card, and exits:
+
+.. code-block:: bash
+
+   ./tui/dist/queen status
+   ./tui/dist/queen todos create --text "buy milk"
+   ./tui/dist/queen "show latest todo"
+   echo "what did I say about the budget" | ./tui/dist/queen
+
+Recognized subcommands are derived from the pinned ``bee-cli`` registry, so every
+resource (``todos``, ``facts``, ``insights``, ``journals``, ``conversations``,
+``locations``, ``search``, …) works. Free text is resolved cheaply: information
+questions go to Bee search, list/latest reads are deterministic, and actions use
+one local-model tool-selection turn. Ambiguous requests fail fast with a card of
+runnable suggestions instead of guessing.
 
 Credentials
 -----------

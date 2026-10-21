@@ -1,12 +1,13 @@
 import { createRoot } from "@opentui/react";
 import { createCliRenderer } from "@opentui/core";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { BeeSplash } from "./components/bee-splash";
 import { loadRecentDocuments, placeholderDocument, type QueenDocument } from "./documents";
 import { ensureAnalytics } from "./functions/analytics/store";
 import { orchestratorPrompt } from "./functions/agents";
 import type { DocFilter } from "./functions/ui-bridge";
+import { beeRefreshFor, startBeeWatch, stopBeeWatch, subscribeBeeEvents } from "./libraries/bee-watch";
 import { LoginCard } from "./interface/login-card";
 import { Toaster } from "./interface/toaster";
 import { McpProvider } from "./mcp";
@@ -26,11 +27,12 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
   const [docs, setDocs] = useState<QueenDocument[]>([]);
   const [splash, setSplash] = useState<string | null>("reading your latest documents…");
   const [loaded, setLoaded] = useState(false);
+  const activeFilter = useRef<DocFilter | null>(null);
 
-  // Login gate: decide before showing anything data-shaped.
+  
   useEffect(() => {
     let alive = true;
-    isLoggedIn()
+    isLoggedIn() //XXX Login gate: decide before showing anything data-shaped.
       .then((ok) => {
         if (alive) setAuth(ok ? "in" : "out");
       })
@@ -46,14 +48,16 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
     setDocs((prev) => prev.map((item) => (item.key === doc.key ? doc : item)));
   }, []);
 
-  // Display actions re-drive the panels through this.
-  const refreshDocuments = useCallback(async (filter: DocFilter = {}): Promise<QueenDocument[]> => {
+  //TODO: SSE changes or post tool call changes
+  const refreshDocuments = useCallback(async (filter?: DocFilter): Promise<QueenDocument[]> => {
+    if (filter) activeFilter.current = filter;
+    const effective = filter ?? activeFilter.current ?? {};
     const records = await loadRecentDocuments({
-      limit: filter.limit ?? 20,
-      ...(filter.kinds ? { kinds: filter.kinds } : {}),
-      ...(filter.from !== undefined ? { from: filter.from } : {}),
-      ...(filter.to !== undefined ? { to: filter.to } : {}),
-      ...(filter.query ? { query: filter.query } : {}),
+      limit: effective.limit ?? 20,
+      ...(effective.kinds ? { kinds: effective.kinds } : {}),
+      ...(effective.from !== undefined ? { from: effective.from } : {}),
+      ...(effective.to !== undefined ? { to: effective.to } : {}),
+      ...(effective.query ? { query: effective.query } : {}),
       sort: "recency",
     });
     if (records.length > 0) setDocs(records);
@@ -107,13 +111,28 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
     };
   }, [auth]);
 
+  
+  useEffect(() => {
+    if (auth !== "in") return;
+    void startBeeWatch();
+    const unsubscribe = subscribeBeeEvents((event) => {
+      const active = activeFilter.current;
+      const next = beeRefreshFor(active, event);
+      if (next) void refreshDocuments(active ?? undefined); //TODO: - Keep refreshing, keep keep refreshing
+    });
+    return () => {
+      unsubscribe();
+      void stopBeeWatch();
+    };
+  }, [auth, refreshDocuments]);
+
   if (auth === "checking") {
     return <BeeSplash words="connecting to Bee…" hint="checking credentials…" />;
   }
 
-  // Logged out: skip the document splash entirely and go straight to login.
+  
   if (auth === "out") {
-    return <LoginCard onConnected={() => setAuth("in")} />;
+    return <LoginCard onConnected={() => setAuth("in")} />; //XXX Logged out: skip the document splash entirely and go straight to login.
   }
 
   if (!loaded || splash !== null) {

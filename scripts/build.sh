@@ -7,7 +7,8 @@
 #   ./scripts/build.sh [model.gguf] [--name queen-small]
 #
 # Families: falcon-h1, qwen3.5, falcon-h1r, gemma4, apertus, lfm2.5
-# Single-model defaults: --model falcon-h1, --params <lowest listed>, --quant q8_0.
+# Single-model defaults: --model lfm2.5, --params 2.6b, --quant q5_k_m.
+# Passing -m/-p explicitly keeps q8_0 unless -q is also given.
 # Output: tui/dist/$NAME (default: queen).
 #
 # Env:
@@ -27,9 +28,13 @@ BEE_CLI="$ROOT/bee-cli"
 MODELS_DIR="${QUEEN_MODELS_DIR:-$ROOT/models}"
 ELTHUR="${ELTHUR_DIR:-$ROOT/elthur}"
 
+DEFAULT_FAMILY="lfm2.5"
+DEFAULT_PARAMS="2.6b" ## NOTE: Its between this and Qwen 4B (punch high for a ~2 GB or 3.5 GB footprint)
+DEFAULT_QUANT="q5_k_m"
+
 FAMILY=""
 PARAMS=""
-QUANT="q8_0"
+QUANT=""
 NAME="queen"
 DYLIB=""
 URL=""
@@ -146,8 +151,10 @@ ensure_dylib() {
     fi
     DYLIB="$ELTHUR/outputs/lib/libelthur.dylib"
     if [ -n "${QUEEN_REBUILD_DYLIB:-}" ] || [ ! -f "$DYLIB" ]; then
-      echo "==> elthur: scripts/build.sh"
-      ( cd "$ELTHUR" && ./scripts/build.sh )
+      # NOTE dylib-only: the engine build never needs a GGUF. The model is
+      # appended to the executable later, by append_model.
+      echo "==> elthur: scripts/build.sh --host"
+      ( cd "$ELTHUR" && ./scripts/build.sh --host )
     fi
     [ -f "$DYLIB" ] || {
       echo "dylib not found: $DYLIB" >&2
@@ -239,13 +246,23 @@ elif [ -n "$URL" ]; then
 elif [ -z "$FAMILY" ] && [ -n "${QUEEN_MODEL:-}" ]; then
   MODEL_PATH="$QUEEN_MODEL"
 else
-  raw_family="${FAMILY:-falcon-h1}"
-  FAMILY="$(alias_family "$raw_family")" || {
-    echo "unknown model family: $raw_family (try --list)" >&2
+  NO_MODEL_ARGS=false
+  if [ -z "$FAMILY" ] && [ -z "$PARAMS" ] && [ -z "$QUANT" ]; then
+    NO_MODEL_ARGS=true
+  fi
+  FAMILY="${FAMILY:-$DEFAULT_FAMILY}"
+  FAMILY="$(alias_family "$FAMILY")" || {
+    echo "unknown model family: ${FAMILY} (try --list)" >&2
     exit 2
   }
-  if [ -z "$PARAMS" ]; then
-    PARAMS="$(lowest_params "$FAMILY")"
+  if $NO_MODEL_ARGS; then
+    PARAMS="$DEFAULT_PARAMS"
+    QUANT="$DEFAULT_QUANT"
+  else
+    if [ -z "$PARAMS" ]; then
+      PARAMS="$(lowest_params "$FAMILY")"
+    fi
+    QUANT="${QUANT:-q8_0}"
   fi
   fetch_model "$FAMILY" "$PARAMS" "$QUANT"
 fi

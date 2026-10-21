@@ -1,3 +1,6 @@
+import type { DocumentKind } from "../documents";
+import type { DocFilter } from "../functions/ui-bridge";
+
 export type BeeWatchEvent = { event: string; data: unknown };
 
 export type BeeWatchStatus = "connecting" | "connected" | "error" | "stopped";
@@ -7,6 +10,33 @@ export type BeeWatchState = {
   error: string | null;
   lastEventAt: number | null;
 };
+
+const KINDS_FOR_EVENT: Record<string, DocumentKind[]> = {
+  "new-conversation": ["conversation"],
+  "update-conversation": ["conversation"],
+  "update-conversation-summary": ["conversation"],
+  "delete-conversation": ["conversation"],
+  "new-utterance": ["conversation"],
+  "update-location": ["location"],
+  "todo-created": ["todo"],
+  "todo-updated": ["todo"],
+  "todo-deleted": ["todo"],
+  "journal-created": ["journal"],
+  "journal-updated": ["journal"],
+  "journal-deleted": ["journal"],
+  "journal-text": ["journal"],
+}; //TODO documents that can be changed by Bee CLI
+
+
+export function beeRefreshFor(active: DocFilter | null, event: BeeWatchEvent): DocFilter | null {
+  const kinds = KINDS_FOR_EVENT[event.event];
+  if (!kinds || kinds.length === 0) return null;
+  if (!active) return { kinds };
+  if (!active.kinds || active.kinds.length === 0) return active; //TODO SSE changes UI, or at least it should change UI
+  return kinds.some((kind) => active.kinds?.includes(kind)) ? active : null;
+}
+
+export const SUPPORTED_EVENT_TYPES: readonly string[] = Object.keys(KINDS_FOR_EVENT);
 
 let state: BeeWatchState = { status: "stopped", error: null, lastEventAt: null };
 const stateListeners = new Set<() => void>();
@@ -35,6 +65,16 @@ export function subscribeBeeEvents(listener: (event: BeeWatchEvent) => void): ()
   };
 }
 
+export function parseWatchLine(line: string): BeeWatchEvent | null {
+  try {
+    const parsed = JSON.parse(line) as BeeWatchEvent;
+    if (!parsed || typeof parsed.event !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 type Spawned = ReturnType<typeof Bun.spawn>;
 
 let proc: Spawned | null = null;
@@ -55,13 +95,13 @@ async function readLoop(child: Spawned): Promise<void> {
         buffer = buffer.slice(newline + 1);
         newline = buffer.indexOf("\n");
         if (!line) continue;
-        try {
-          const parsed = JSON.parse(line) as BeeWatchEvent;
-          setState({ status: "connected", error: null, lastEventAt: Date.now() });
-          for (const listener of eventListeners) listener(parsed);
-        } catch {
-          console.error("Malformed line from SSE")
+        const parsed = parseWatchLine(line);
+        if (!parsed) {
+          console.error("Malformed line from SSE");
+          continue;
         }
+        setState({ status: "connected", error: null, lastEventAt: Date.now() });
+        for (const listener of eventListeners) listener(parsed);
       }
     }
   } catch (error) {

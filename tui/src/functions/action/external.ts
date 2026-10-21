@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { createCliRenderer, type CliRenderer } from "@opentui/core";
+import { createCliRenderer } from "@opentui/core";
 
-import { writeCard, type CardSpec } from "../../interface/scrollback-card";
+import { writeCard, plainCard, type CardSpec } from "../../interface/scrollback-card";
 import {
   beeContext,
   getChanged,
@@ -24,7 +24,7 @@ const ELTHUR_SHA = process.env.QUEEN_ELTHUR_SHA ?? "dev";
 
 type CommandRun = (argv: string[]) => Promise<CardSpec>;
 
-function errorSpec(name: string, error: unknown): CardSpec {
+export function errorSpec(name: string, error: unknown): CardSpec {
   return {
     title: name,
     subtitle: "command failed",
@@ -154,7 +154,7 @@ const version: CommandRun = async () => ({
 });
 
 
-const staticCommands: Record<string, CommandRun> = {
+const STATIC_COMMANDS: Record<string, CommandRun> = {
   status,
   today,
   now,
@@ -165,17 +165,15 @@ const staticCommands: Record<string, CommandRun> = {
   version,
 }; //TODO Live commands are handled separately because they need the renderer
 
-const LIVE_COMMANDS = new Set(["sync", "login"]);
-
-function isExternalCommand(name: string): boolean {
-  return name in staticCommands || LIVE_COMMANDS.has(name);
-}
-
 function defaultSyncOutput(): string {
   return process.env.QUEEN_SYNC_DIR ?? join(homedir(), ".bee", "sync");
 }
 
-async function renderSpec(spec: CardSpec): Promise<void> {
+export async function renderSpec(spec: CardSpec): Promise<void> {
+  if (!process.stdout.isTTY) {
+    process.stdout.write(`${plainCard(spec)}\n`);
+    return;
+  }
   const renderer = await createCliRenderer({
     screenMode: "split-footer",
     footerHeight: 1,
@@ -191,76 +189,59 @@ async function renderSpec(spec: CardSpec): Promise<void> {
 }
 
 
-async function runSync(argv: string[]): Promise<void> {
+async function syncSpec(argv: string[]): Promise<CardSpec> {
   const { syncCommand } = await import("@/commands/sync");
   const ctx = await beeContext("prod");
   const outputDir = defaultSyncOutput(); //FIXME special casing bee sync to only take up one line per actual sync item
   const args = argv.includes("--output") ? argv : ["--output", outputDir, ...argv];
   await syncCommand.run(args, ctx);
-  await renderSpec({
+  return {
     title: "sync",
     subtitle: "Bee data export",
     sections: [
       { kind: "keyValues", items: [{ key: "output", value: outputDir }] },
       { kind: "text", text: "Sync complete." },
     ],
-  });
+    footer: "queen",
+  };
 }
 
-async function runLoginLive(renderer: CliRenderer, argv: string[]): Promise<void> {
+async function loginSpec(
+  argv: string[],
+  emit?: (spec: CardSpec) => Promise<void>,
+): Promise<CardSpec> {
   const withQr = argv.includes("--qr");
   const start = await startPairing({ withQr });
-  await writeCard(renderer, {
-    title: "login",
-    subtitle: start.resumed ? "resuming pairing session" : "approve in the Bee app",
-    sections: [
-      { kind: "text", text: start.pairingUrl },
-      ...(start.qr ? [{ kind: "text" as const, text: start.qr }] : []),
-      { kind: "text", text: "waiting for approval…" },
-    ],
-  });
+  if (emit) {
+    await emit({
+      title: "login",
+      subtitle: start.resumed ? "resuming pairing session" : "approve in the Bee app",
+      sections: [
+        { kind: "text", text: start.pairingUrl },
+        ...(start.qr ? [{ kind: "text" as const, text: start.qr }] : []),
+        { kind: "text", text: "waiting for approval…" },
+      ],
+      footer: "queen",
+    });
+  }
   const outcome = await pollPairing({});
-  await writeCard(renderer, {
+  return {
     title: "login",
     subtitle: "connected",
     sections: [{ kind: "text", text: `Connected to Bee as ${outcome.name}.` }],
-  });
+    footer: "queen",
+  };
 }
 
-
-export async function runExternalCommand(prompt: string): Promise<boolean> {
-  const trimmed = prompt.trim();
-  if (!trimmed) return false;
-  const [name, ...argv] = trimmed.split(/\s+/);
-  if (!name || !isExternalCommand(name)) return false;
-
-  if (name === "sync") {
-    try {
-      await runSync(argv);
-    } catch (error) {
-      await renderSpec(errorSpec(name, error));
-    }
-    return true;
-  }
-
-  const renderer = await createCliRenderer({
-    screenMode: "split-footer",
-    footerHeight: 1,
-    externalOutputMode: "capture-stdout",
-    clearOnShutdown: false,
-  });
-  try {
-    if (name === "login") {
-      await runLoginLive(renderer, argv);
-    } else {
-      const spec = await staticCommands[name]!(argv);
-      await writeCard(renderer, spec);
-    }
-  } catch (error) {
-    await writeCard(renderer, errorSpec(name, error)).catch(() => {});
-  } finally {
-    renderer.destroy();
-    await new Promise((resolve) => setTimeout(resolve, 120));
-  }
-  return true;
+/** Build the card for a queen-owned command (status, today, sync, login, ...). */
+export async function externalSpec(
+  name: string,
+  argv: string[],
+  emit?: (spec: CardSpec) => Promise<void>,
+): Promise<CardSpec> {
+  if (name === "sync") return syncSpec(argv);
+  if (name === "login") return loginSpec(argv, emit);
+  const run = STATIC_COMMANDS[name];
+  if (!run) throw new Error(`Unknown command: ${name}`);
+  return run(argv);
 }
