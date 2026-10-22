@@ -1,6 +1,5 @@
 import { configureLogging } from "@strands-agents/sdk";
 
-import type { QueenDocument } from "../documents";
 import type { UiBridge } from "./ui-bridge";
 import { AgentRunner } from "./agents/runner";
 import { createSession } from "./agents/session";
@@ -39,21 +38,14 @@ export type ChatCallbacks = {
 };
 
 export type ChatSession = {
-  key: string;
   send: (question: string, callbacks: ChatCallbacks) => Promise<void>;
 };
 
-export async function createChatSession(doc: QueenDocument, bridge: UiBridge): Promise<ChatSession> {
-  const session = createSession({
-    kind: doc.kind,
-    id: doc.id,
-    title: doc.title,
-    summary: doc.summary,
-  });
+export async function createChatSession(bridge: UiBridge): Promise<ChatSession> {
+  const session = createSession();
   const runner = new AgentRunner({ bridge, mode: "tui", session });
 
   return {
-    key: doc.key,
     send: async (question, callbacks) => {
       await runner.run(question, {
         onAck: callbacks.onAck,

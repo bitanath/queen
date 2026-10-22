@@ -1,4 +1,4 @@
-import type { SessionItem, SessionResult, SessionState } from "./types";
+import type { SessionItem, SessionReference, SessionResult, SessionState } from "./types";
 
 const RESULT_KEYS = ["results", "todos", "facts", "conversations", "daily_summaries", "insights", "voice_notes", "visits", "photos", "transcript"];
 
@@ -31,6 +31,44 @@ const KIND_BY_TOOL: Record<string, string> = {
   bee_status: "status",
   bee_me: "profile",
 };
+
+const KIND_ALIASES: Record<string, string> = {
+  conversation: "conversation",
+  conversations: "conversation",
+  transcript: "conversation",
+  transcripts: "conversation",
+  fact: "fact",
+  facts: "fact",
+  daily_summary: "daily",
+  "daily-summary": "daily",
+  daily: "daily",
+  insight: "insight",
+  insights: "insight",
+  journal: "journal",
+  journals: "journal",
+  voice_note: "journal",
+  "voice-note": "journal",
+  voice_notes: "journal",
+  todo: "todo",
+  todos: "todo",
+  task: "todo",
+  tasks: "todo",
+  photo: "photo",
+  photos: "photo",
+  location: "location",
+  locations: "location",
+  visit: "location",
+  visits: "location",
+};
+
+function kindOfRecord(record: Record<string, unknown>, fallback?: string): string | undefined {
+  const type = record["type"];
+  if (typeof type === "string") {
+    const alias = KIND_ALIASES[type.toLowerCase()];
+    if (alias) return alias;
+  }
+  return fallback;
+}
 
 function textOf(value: unknown): string {
   if (typeof value === "string") {
@@ -120,6 +158,7 @@ export function rememberResult(
   const payload = parsePayload(text.length > 0 ? text : raw);
   const records: Record<string, unknown>[] = [];
   collectItems(payload, records);
+  const fallback = KIND_BY_TOOL[tool] ?? fallbackKind;
   const items: SessionItem[] = [];
   const seen = new Set<string>();
   for (const record of records) {
@@ -133,14 +172,14 @@ export function rememberResult(
       id,
       title,
       index: items.length,
-      kind: KIND_BY_TOOL[tool] ?? fallbackKind,
+      kind: kindOfRecord(record, fallback),
       ...(createdAtOf(record) !== undefined ? { createdAt: createdAtOf(record) } : {}),
       record,
     });
   }
   if (items.length === 0) return session.lastResult;
   const result: SessionResult = {
-    kind: KIND_BY_TOOL[tool] ?? fallbackKind ?? "item",
+    kind: items[0]?.kind ?? fallback ?? "item",
     items,
     ...(text.length > 0 ? { text: text.slice(0, 4000) } : {}),
   };
@@ -188,6 +227,38 @@ export function rememberAction(
   }
 }
 
+export function rememberReference(
+  session: SessionState,
+  kind: string,
+  record: Record<string, unknown>,
+  text?: string,
+): SessionItem | undefined {
+  const id = record["id"];
+  if (typeof id !== "number" && typeof id !== "string") return undefined;
+  const item: SessionItem = {
+    id,
+    title: titleOf(record) || kind,
+    index: 0,
+    kind,
+    ...(createdAtOf(record) !== undefined ? { createdAt: createdAtOf(record) } : {}),
+    record,
+  };
+  const existing = session.lastResult?.items.find(
+    (candidate) => String(candidate.id) === String(id) && candidate.kind === kind,
+  );
+  if (existing) {
+    existing.title = item.title;
+    if (item.createdAt !== undefined) existing.createdAt = item.createdAt;
+    existing.record = record;
+    item.index = existing.index;
+  }
+  session.lastEntity = item;
+  if (!session.lastResult) {
+    session.lastResult = { kind, items: [item], ...(text ? { text: text.slice(0, 4000) } : {}) };
+  }
+  return item;
+}
+
 export function setPendingClarification(
   session: SessionState,
   prompt: string,
@@ -203,7 +274,18 @@ export function clearPendingClarification(session: SessionState): void {
 
 export function resolveReference(session: SessionState, text: string): SessionItem | undefined {
   const items = session.lastResult?.items ?? [];
-  if (items.length === 0) return session.lastEntity;
+  if (items.length === 0) {
+    if (session.lastEntity) return session.lastEntity;
+    if (session.activeDoc) {
+      return {
+        id: session.activeDoc.id,
+        title: session.activeDoc.title ?? "",
+        index: 0,
+        kind: session.activeDoc.kind,
+      };
+    }
+    return undefined;
+  }
   const lower = text.toLowerCase();
   const ordinal =
     /\b(?:the\s+)?first\b/.test(lower) ? 0 :
@@ -214,10 +296,167 @@ export function resolveReference(session: SessionState, text: string): SessionIt
   if (/\b(?:oldest|earliest)\b/.test(lower)) {
     return [...items].sort((a, b) => (a.createdAt ?? a.index) - (b.createdAt ?? b.index))[0];
   }
-  if (/\b(?:newest|latest|last)\b/.test(lower)) {
+  if (/\b(?:newest|latest|last|most recent)\b/.test(lower)) {
     return [...items].sort((a, b) => (b.createdAt ?? b.index) - (a.createdAt ?? a.index))[0];
   }
   return session.lastEntity ?? items[0];
+}
+
+const URI_KIND: Record<string, string> = {
+  conversations: "conversation",
+  todos: "todo",
+  facts: "fact",
+  daily: "daily",
+  journals: "journal",
+  insights: "insight",
+  photos: "photo",
+  locations: "location",
+};
+
+export type ResolvedReference = SessionReference;
+
+export const REFERENCE_READ_TOOLS: Record<string, string> = {
+  conversation: "bee_get_conversation",
+  fact: "bee_get_fact",
+  daily: "bee_get_daily_summary",
+  insight: "bee_get_insight",
+  journal: "bee_get_voice_note",
+};
+
+export function referenceReadTool(kind: string | undefined): string | undefined {
+  return kind ? REFERENCE_READ_TOOLS[kind] : undefined;
+}
+
+const REFERENCE_STOP = new Set([
+  "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "from", "by",
+  "about", "into", "over", "after", "before", "this", "that", "these", "those", "it", "them", "its",
+  "me", "my", "mine", "i", "you", "your", "we", "our", "us", "he", "she", "they", "his", "her", "their",
+  "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "have", "has", "had",
+  "can", "could", "would", "should", "will", "shall", "may", "might", "must", "please", "tell", "show",
+  "give", "get", "read", "fetch", "find", "search", "look", "up", "more", "gist", "summary", "summaries",
+  "detail", "details", "what", "which", "who", "whom", "when", "where", "why", "how", "say", "said",
+  "talk", "talked", "discuss", "discussed", "mention", "mentioned", "hear", "heard", "conversation",
+  "conversations", "transcript", "transcripts", "chat", "chats", "note", "notes", "voice", "journal",
+  "journals", "fact", "facts", "todo", "todos", "task", "tasks", "daily", "insight", "insights",
+  "latest", "last", "newest", "oldest", "first", "second", "third", "next", "previous", "one", "ones",
+  "thing", "things", "item", "items", "bee", "request", "like", "just", "now",
+]);
+
+function normalizeReference(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function significantReferenceTokens(value: string): string[] {
+  return normalizeReference(value)
+    .split(" ")
+    .filter((word) => word.length > 2 && !REFERENCE_STOP.has(word));
+}
+
+function tokenMatch(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.length < 4 || right.length < 4) return false;
+  return left.startsWith(right) || right.startsWith(left);
+}
+
+function titleScore(title: string, requestWords: string[]): number | undefined {
+  const titleWords = significantReferenceTokens(title);
+  if (titleWords.length === 0) return undefined;
+  let matched = 0;
+  for (const word of titleWords) {
+    if (requestWords.some((candidate) => tokenMatch(word, candidate))) matched += 1;
+  }
+  if (matched === 0) return undefined;
+  const distinctive = matched >= 2 || titleWords.length === 1;
+  if (!distinctive) return undefined;
+  const titleCoverage = matched / titleWords.length;
+  const requestCoverage = matched / Math.max(1, requestWords.length);
+  return matched * 4 + titleCoverage * 2 + requestCoverage;
+}
+
+function matchTitle(items: SessionItem[], text: string): SessionItem | undefined {
+  const normalized = normalizeReference(text);
+  const exact = items.find((candidate) => {
+    const title = normalizeReference(candidate.title);
+    return title.length > 2 && normalized.includes(title);
+  });
+  if (exact) return exact;
+
+  const requestWords = significantReferenceTokens(text);
+  if (requestWords.length === 0) return undefined;
+  let best: { item: SessionItem; score: number; recency: number } | undefined;
+  for (const item of items) {
+    const score = titleScore(item.title, requestWords);
+    if (score === undefined) continue;
+    const recency = item.createdAt ?? -item.index;
+    if (!best || score > best.score || (score === best.score && recency > best.recency)) {
+      best = { item, score, recency };
+    }
+  }
+  return best?.item;
+}
+
+function referenceCandidates(session: SessionState): SessionItem[] {
+  const items = session.lastResult?.items ?? [];
+  const last = session.lastEntity;
+  if (!last) return items;
+  if (items.some((item) => String(item.id) === String(last.id) && item.kind === last.kind)) return items;
+  return [...items, last];
+}
+
+/** Resolve a title, Bee URI, ordinal, or pronoun from the last result. */
+export function resolveRequestedReference(
+  session: SessionState,
+  text: string,
+): ResolvedReference | undefined {
+  const items = referenceCandidates(session);
+  const uri = /\bbee:\/\/([a-z-]+)\/([^\s?#]+)/i.exec(text);
+  if (uri) {
+    const id = decodeURIComponent(uri[2] ?? "");
+    const item = items.find((candidate) => String(candidate.id) === id);
+    const kind = item?.kind ?? URI_KIND[uri[1]?.toLowerCase() ?? ""];
+    if (id.length > 0 && (item || kind)) {
+      return {
+        ...(item ? { item } : {}),
+        ...(kind ? { kind } : {}),
+        id: item?.id ?? id,
+        ...(item?.title ? { title: item.title } : {}),
+        source: "uri",
+      };
+    }
+  }
+
+  const item = matchTitle(items, text);
+  if (item) {
+    return {
+      item,
+      ...(item.kind ? { kind: item.kind } : {}),
+      id: item.id,
+      title: item.title,
+      source: "title",
+    };
+  }
+
+  if (/\b(?:this|that|these|those|it|them|first|second|third|last|latest|oldest|newest|most recent)\b/i.test(text)) {
+    const resolved = resolveReference(session, text);
+    if (resolved) {
+      return {
+        item: resolved,
+        ...(resolved.kind ? { kind: resolved.kind } : {}),
+        id: resolved.id,
+        ...(resolved.title ? { title: resolved.title } : {}),
+        source: /\b(?:first|second|third)\b/i.test(text) ? "ordinal" : "pronoun",
+      };
+    }
+  }
+  return undefined;
+}
+
+export function referenceLine(reference: ResolvedReference): string {
+  const title = reference.title ? ` title=${JSON.stringify(reference.title)}` : "";
+  const line = `Resolved reference: ${reference.kind ?? "item"} id=${String(reference.id)}${title}`;
+  const tool = referenceReadTool(reference.kind);
+  if (!tool) return line;
+  return `${line}\nFetch this ${reference.kind} with ${tool} using id=${String(reference.id)}. Do not answer "done".`;
 }
 
 export function formatSession(session: SessionState): string {

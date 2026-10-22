@@ -16,7 +16,16 @@ const BLINK_CYCLE = 15; // blink every 1.5s (twice as frequent)
 const BLINK_SEQUENCE = [0.6, 1, 0.6];
 
 type RGBA = readonly [number, number, number, number];
-type FrameKey = `${number}:${number}:${number}`;
+type FrameKey = `${number}:${number}:${number}:${string}`;
+
+function rgbOf(hex: string): RGBA {
+  const value = hex.replace("#", "");
+  const n = Number.parseInt(value, 16);
+  if (value.length === 6 && Number.isFinite(n)) {
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
+  }
+  return [0, 0, 0, 255];
+}
 
 const C = {
   body: [255, 202, 49, 255] as RGBA,
@@ -190,8 +199,21 @@ function drawAntenna(
   curve(data, joint, [joint[0] + side * 4, joint[1] - 4], [joint[0] + side * 7, joint[1] - 7], 0.8, C.antennaEdge);
 }
 
-export function renderBeeFrame(hoverPhase: number, wingPhase: number, blink: number): Uint8Array {
+export function renderBeeFrame(
+  hoverPhase: number,
+  wingPhase: number,
+  blink: number,
+  background: RGBA = [0, 0, 0, 0],
+): Uint8Array {
   const data = new Uint8Array(ART_PX * ART_PX * 4);
+  if (background[3] > 0) {
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = background[0];
+      data[i + 1] = background[1];
+      data[i + 2] = background[2];
+      data[i + 3] = 255;
+    }
+  }
 
   const lift = (1 - Math.cos(hoverPhase)) * 4;
   const flap = 1 - 0.17 * (0.5 + 0.5 * Math.sin(wingPhase));
@@ -293,20 +315,22 @@ export function BeeSplash({
   const wingFrame = tick % WING_FRAMES;
   const blinkFrame = tick % BLINK_CYCLE;
   const blink = BLINK_SEQUENCE[blinkFrame] ?? 0;
+  const background = theme.colors.background;
 
   const frame = useMemo(() => {
-    const key: FrameKey = `${hoverFrame}:${wingFrame}:${blink}`;
+    const key: FrameKey = `${hoverFrame}:${wingFrame}:${blink}:${background}`;
     const hit = cache.current.get(key);
     if (hit) return hit;
     const pixels = renderBeeFrame(
       (hoverFrame / HOVER_FRAMES) * Math.PI * 2,
       (wingFrame / WING_FRAMES) * Math.PI * 2,
       blink,
+      rgbOf(background),
     );
     const image = NativeImage.fromRgba(pixels, ART_PX, ART_PX);
     cache.current.set(key, image);
     return image;
-  }, [blink, hoverFrame, wingFrame]);
+  }, [background, blink, hoverFrame, wingFrame]);
 
   useEffect(() => {
     const images = cache.current;
@@ -330,6 +354,7 @@ export function BeeSplash({
       flexDirection="column"
       alignItems="center"
       justifyContent="center"
+      backgroundColor={theme.colors.background}
     >
       <image source={frame} width={artCols} height={artRows} fit="fill" />
 

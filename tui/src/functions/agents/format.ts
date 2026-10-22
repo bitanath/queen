@@ -46,8 +46,15 @@ function cell(value: unknown): string {
     .trim();
 }
 
-function number(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function time(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  const local = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (local) {
+    return new Date(Number(local[1]), Number(local[2]) - 1, Number(local[3])).getTime();
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export function timestampOf(record: Record<string, unknown>, kind?: string): number | undefined {
@@ -55,11 +62,10 @@ export function timestampOf(record: Record<string, unknown>, kind?: string): num
     kind === "conversation" ? ["started_at", "start_time", "created_at"] :
     kind === "daily" ? ["date_time", "date"] :
     kind === "location" ? ["start", "started_at", "created_at"] :
-    ["created_at", "started_at", "start_time", "date_time", "date", "spoken_at"];
+    ["created_at", "started_at", "start_time", "date_time", "date", "spoken_at", "timestamp", "updated_at", "taken_at", "captured_at", "last_accessed_at", "last_accessed"];
   for (const key of keys) {
-    const value = record[key];
-    const numeric = number(value);
-    if (numeric !== undefined) return numeric;
+    const value = time(record[key]);
+    if (value !== undefined) return value;
   }
   return undefined;
 }

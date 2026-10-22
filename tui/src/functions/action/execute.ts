@@ -57,6 +57,11 @@ function fromResult(title: string, result: CommandResult): ActionOutcome {
   return result.view?.table ? viewFromTable(title, result.view.table) : { title, markdown: result.text };
 }
 
+function idArg(doc: QueenDocument): number | string {
+  const id = Number(doc.id);
+  return Number.isFinite(id) ? id : doc.id;
+}
+
 async function runList(spec: ListSpec): Promise<ActionOutcome> {
   const ctx = await beeContext("prod");
   const data = await callBeeTextTool(ctx, spec.tool, { ...(spec.args ? spec.args() : {}), limit: 25 });
@@ -82,7 +87,46 @@ export async function executeAction(action: QueenAction, doc: QueenDocument | un
     return runList(list);
   }
   if (subcommand === "get" && doc) {
-    return { title: doc.title, markdown: doc.markdown, refresh: { kinds: [doc.kind] } };
+    return { title: doc.title, refresh: true };
+  }
+  if (resource === "todos" && (subcommand === "complete" || subcommand === "delete") && doc) {
+    const ctx = await beeContext("prod");
+    const tool = subcommand === "complete" ? "bee_complete_todo" : "bee_delete_todo";
+    await callBeeTextTool(ctx, tool, { id: idArg(doc) });
+    return {
+      title: action.label,
+      markdown: subcommand === "complete" ? "Todo completed." : "Todo deleted.",
+      refresh: true,
+    };
+  }
+  if (resource === "facts" && (subcommand === "confirm" || subcommand === "delete") && doc) {
+    const ctx = await beeContext("prod");
+    if (subcommand === "confirm") {
+      await callBeeTextTool(ctx, "bee_update_fact", { id: idArg(doc), confirmed: true });
+    } else {
+      await callBeeTextTool(ctx, "bee_delete_fact", { id: idArg(doc) });
+    }
+    return {
+      title: action.label,
+      markdown: subcommand === "confirm" ? "Fact confirmed." : "Fact deleted.",
+      refresh: true,
+    };
+  }
+  if (
+    resource === "todos" &&
+    (subcommand === "accept-suggestion" || subcommand === "dismiss-suggestion") &&
+    doc
+  ) {
+    const ctx = await beeContext("prod");
+    const tool = subcommand === "accept-suggestion"
+      ? "bee_accept_todo_suggestion"
+      : "bee_dismiss_todo_suggestion";
+    await callBeeTextTool(ctx, tool, { id: idArg(doc) });
+    return {
+      title: action.label,
+      markdown: subcommand === "accept-suggestion" ? "Suggestion accepted." : "Suggestion dismissed.",
+      refresh: true,
+    };
   }
   if (subcommand === "transcript" && doc) {
     return { title: "Transcript", markdown: doc.transcript.length > 0 ? doc.transcript : "_No transcript captured._" };

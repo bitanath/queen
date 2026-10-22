@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import { ElthurModel } from "../strands-model";
 import { parseListRequest } from "./list-request";
-import { resolveReference } from "./session";
+import { referenceItemBlock, targetLine } from "./reference-content";
+import { referenceLine, referenceReadTool, resolveReference, resolveRequestedReference } from "./session";
+import type { ResolvedReference } from "./session";
 import type { RouteDecision, SessionState, StepResult } from "./types";
 
 export const ORCHESTRATOR_PROMPT = `You are Queen's dispatcher. Choose one next step. Return only the structured decision.
@@ -54,18 +56,32 @@ export function decisionOf(result: { structuredOutput?: unknown }): RouteDecisio
 export const orchestratorPrompt = ORCHESTRATOR_PROMPT;
 
 
-const BEE_NOUN = /\b(?:conversation|conversations|transcript|transcripts|fact|facts|todo|todos|task|tasks|daily|summary|summaries|brief|insight|insights|journal|journals|voice notes?|location|locations|visit|visits|photo|photos|profile|activity|bee|reminders?|what did i (?:say|talk|discuss|hear|mention)|where (?:am i|have i been)|my name|logged in|reachable)\b/;
-const BEE_DATA = /\b(?:conversation|conversations|transcript|transcripts|fact|facts|todo|todos|task|tasks|daily|summary|summaries|brief|insight|insights|journal|journals|voice notes?|location|locations|visit|visits|photo|photos|profile|activity|my data|what did i (?:say|talk|discuss|hear|mention)|where (?:am i|have i been)|my name|logged in|reachable)\b/;
-const BEE_WRITE_VERB = /\b(?:add|create|make|save|update|edit|delete|remove|complete|mark|dismiss|accept|log|track|remember)\b/;
+const BEE_NOUN = /\b(?:conversation|conversations|transcript|transcripts|fact|facts|todo|todos|task|tasks|daily|summary|summaries|brief|insight|insights|journal|journals|voice notes?|location|locations|visit|visits|photo|photos|profile|activity|bee|alarms?|what did i (?:say|talk|discuss|hear|mention)|where (?:am i|have i been)|my name|logged in|reachable)\b/;
+const BEE_DATA = /\b(?:conversation|conversations|transcript|transcripts|fact|facts|todo|todos|task|tasks|daily|summary|summaries|brief|insight|insights|journal|journals|voice notes?|location|locations|visit|visits|photo|photos|profile|activity|alarms?|my data|what did i (?:say|talk|discuss|hear|mention)|where (?:am i|have i been)|my name|logged in|reachable)\b/;
+const BEE_WRITE_VERB = /\b(?:add|create|make|save|update|edit|delete|remove|complete|mark|dismiss|accept|log|track|remember|rename|move|reschedule|alarm|change)\b/;
 const BEE_LIST_VERB = /\b(?:list|show|latest|newest|recent|review|which|what have i been up to)\b/;
 const LATEST_KIND = /\b(?:last|latest|newest|oldest|first|second|third)\s+(?:\d+\s+)?(?:todo|todos|task|tasks|fact|facts|conversation|conversations|transcript|transcripts|journal|journals|voice notes?|insight|insights|daily|summary|summaries|photo|photos|location|locations|visit|visits)\b/;
 const BEE_READ_VERB = /\b(?:what|where|who|when|why|how|did|find|search|summar|tell|get|fetch|look up|read|am i|is bee|has)\b/;
 const OS_NOUN = /\b(?:remind|reminder|reminders|calendar|meeting|appointment|event|note|notes|email|mail|draft|imessage|text|message|clipboard|copy|paste|music|song|play|pause|skip|open|launch|url|browser|app|map|maps|address|directions|navigate|finder|reveal|folder|downloads|shortcut|shortcuts|battery|disk|dark mode|light mode|notification|notifications|notify|contact|contacts)\b/;
-const OS_WRITE = /\b(?:add|create|make|save|update|delete|remove|send|draft|text|email|mail|open|launch|copy|paste|play|pause|skip|toggle|turn|remind|schedule|notify|show|reveal|run)\b/;
-const WRITE_TARGET = /\b(?:delete|remove|complete|update|edit|mark|dismiss|accept)\b/;
+const OS_WRITE = /\b(?:add|create|make|save|set|put|write|compose|update|delete|remove|send|draft|text|email|mail|open|launch|copy|paste|play|pause|stop|skip|next|previous|toggle|turn|remind|schedule|notify|show|reveal|run|start|move|rename)\b/;
+const WRITE_TARGET = /\b(?:delete|remove|complete|update|edit|mark|dismiss|accept|rename|move|reschedule|alarm|change)\b/;
+const ORDINAL_REFERENCE = /\b(?:first|second|third)\b/i;
+const MULTI_REFERENCE = /\b(?:last|latest|newest|oldest|first|recent)\s+\d+\b|\b(?:all|both|any)\b/;
+const PLURAL_REFERENCE = /\b(?:these|those|them|all|both|any)\b/;
+const OS_JOURNAL = /\b(?:voice notes?|bee notes?|journals?)\b/;
+const OS_ACTION_VERB = /\b(?:add|create|make|save|set|put|write|compose|schedule|remind|send|draft|text|email|mail|imessage|message|copy|paste|play|pause|stop|skip|toggle|turn|notify|run|reveal|start|move|rename|alarm)\b/;
+const OS_CONTENT_ACTION = /\b(?:note|notes|email|mail|draft|message|imessage|text|clipboard|copy|paste|notification|notify)\b/;
+const OS_IMPLICIT_NOUN = /\b(?:reminders?|notes?|calendar|events?|email|mail|drafts?|messages?|imessage|notifications?)\b/;
+const DEMONSTRATIVE = /\b(?:this|these|those|them)\b|\bthat\b(?!\s+(?:i|you|he|she|we|they|it|the|a|an|my|our|your|his|her|their)\b)/;
+const REFERENCE_WORD = new RegExp(`${DEMONSTRATIVE.source}|\\b(?:it|first|second|third|last|latest|newest|oldest|most recent)\\b`);
+const READ_QUESTION = /^\s*(?:(?:okay|please|yes|yeah|sure|no|now)[, ]+)*(?:show|list|read|display|what|which|who|when|where|why|how|tell me|do i have)\b/;
+const QUESTION = /^\s*(?:is|are|was|were|do|does|did|can|could|would|should|will|what|which|who|when|where|why|how)\b/;
 const GREETING = /^(?:hi|hey|hello|thanks|thank you|what can you do|who are you|tell me a joke|what is \d|how do|i think|i'm liking|the sky|hmm|good morning|good night)\b/;
 
 function dataText(step: StepResult, session: SessionState): string {
+  if (step.direct === true && step.text.trim().length > 0) {
+    return step.text.slice(0, 4000);
+  }
   const items = session.lastResult?.items ?? [];
   if (items.length > 0) {
     return items.map((item, index) => `${index + 1}. ${item.title}`).join("\n");
@@ -75,42 +91,147 @@ function dataText(step: StepResult, session: SessionState): string {
 
 function isCrossDomain(request: string): boolean {
   const lower = request.toLowerCase();
-  if (/\b(?:voice notes?|bee notes?|journals?)\b/.test(lower)) return false;
+  if (OS_JOURNAL.test(lower)) return false;
   if (!BEE_DATA.test(lower)) return false;
   if (OS_NOUN.test(lower)) return true;
   return /\b(?:from|using|based on|about)\b/.test(lower) && BEE_WRITE_VERB.test(lower);
 }
 
-function nextAfterData(request: string, steps: StepResult[], session: SessionState): RouteDecision | undefined {
+function clarifyDecision(question: string, request: string): RouteDecision {
+  return {
+    prompt: question,
+    intent: request,
+    agent: "done",
+    clarify: true,
+    final: true,
+  };
+}
+
+function dataBlock(session: SessionState, text?: string): string {
+  if (text !== undefined && text.trim().length > 0) {
+    return `Use this Bee data:\n${text.trim().slice(0, 4000)}`;
+  }
+  const items = session.lastResult?.items ?? [];
+  if (items.length === 0) return "";
+  const block = items
+    .slice(0, 12)
+    .map((item, index) => referenceItemBlock(item, index))
+    .join("\n\n");
+  return `Use this Bee data:\n${block.slice(0, 4000)}`;
+}
+
+function osDecision(
+  request: string,
+  session: SessionState,
+  reference: ResolvedReference | undefined,
+  options: { dataText?: string; includeData?: boolean; afterData?: boolean } = {},
+): RouteDecision {
+  const lower = request.toLowerCase();
+  const plural = PLURAL_REFERENCE.test(lower) || MULTI_REFERENCE.test(lower);
+  const single = reference !== undefined && !plural;
+  const lines = [request];
+  if (single) lines.push(targetLine(reference, session));
+  const includeData =
+    options.includeData ??
+    (options.afterData === true || plural || (!single && REFERENCE_WORD.test(lower)));
+  if (includeData) {
+    const data =
+      options.dataText !== undefined
+        ? options.dataText.trim().length > 0
+          ? `Use this Bee data:\n${options.dataText.trim().slice(0, 4000)}`
+          : ""
+        : dataBlock(session);
+    if (data.length > 0) lines.push(data);
+  }
+  return {
+    prompt: lines.join("\n"),
+    intent: request,
+    agent: "os_action",
+    clarify: false,
+    final: true,
+    ...(single && reference ? { reference } : {}),
+  };
+}
+
+
+function osActionDecision(
+  request: string,
+  session: SessionState,
+  reference: ResolvedReference | undefined,
+  options: { afterData?: boolean; dataText?: string; includeData?: boolean } = {},
+): RouteDecision | undefined {
+  const lower = request.toLowerCase();
+  if (!OS_NOUN.test(lower) || OS_JOURNAL.test(lower)) return undefined;
+
+  const plural = PLURAL_REFERENCE.test(lower) || MULTI_REFERENCE.test(lower);
+  const target = plural ? undefined : reference;
+
+  if (!options.afterData) {
+    if (!reference && REFERENCE_WORD.test(lower) && !BEE_DATA.test(lower) && !READ_QUESTION.test(lower)) {
+      return clarifyDecision("Which item do you mean? Include the item text or a bee:// URI.", request);
+    }
+    if (!reference && DEMONSTRATIVE.test(lower) && !READ_QUESTION.test(lower)) {
+      return clarifyDecision("Which item do you mean? Include the item text or a bee:// URI.", request);
+    }
+    if (MULTI_REFERENCE.test(lower)) return undefined;
+    if (!reference && BEE_DATA.test(lower)) return undefined;
+  }
+
+  const strong = OS_ACTION_VERB.test(lower);
+  const implicit =
+    Boolean(target) &&
+    OS_IMPLICIT_NOUN.test(lower) &&
+    !READ_QUESTION.test(lower) &&
+    !QUESTION.test(lower);
+  if (!strong && !implicit) return undefined;
+
+
+  if (!options.afterData && target && referenceReadTool(target.kind) && OS_CONTENT_ACTION.test(lower)) {
+    return readReferenceDecision(request, target, false);
+  }
+
+  const includeData =
+    options.includeData ??
+    (options.afterData === true || plural || (!target && REFERENCE_WORD.test(lower)));
+  return osDecision(request, session, target, {
+    ...(options.afterData && options.dataText !== undefined ? { dataText: options.dataText } : {}),
+    includeData,
+    afterData: options.afterData,
+  });
+}
+
+function nextAfterData(
+  request: string,
+  steps: StepResult[],
+  session: SessionState,
+  reference: ResolvedReference | undefined,
+): RouteDecision | undefined {
   const last = steps.at(-1);
   if (!last) return undefined;
   if (last.agent !== "bee_list" && last.agent !== "bee_read") return undefined;
   const lower = request.toLowerCase();
+  const plural = PLURAL_REFERENCE.test(lower) || MULTI_REFERENCE.test(lower);
+  const includeData = plural || !reference || (last.direct === true && OS_CONTENT_ACTION.test(lower));
 
-  if (OS_NOUN.test(lower) && OS_WRITE.test(lower)) {
-    return {
-      prompt: `Original request: ${request}\nUse this Bee data:\n${dataText(last, session)}`,
-      agent: "os_action",
-      clarify: false,
-      final: true,
-    };
-  }
+  const os = osActionDecision(request, session, reference, {
+    afterData: true,
+    dataText: dataText(last, session),
+    includeData,
+  });
+  if (os) return os;
 
   if (WRITE_TARGET.test(lower) && (BEE_NOUN.test(lower) || session.lastResult)) {
-    const item = resolveReference(session, request);
-    if (!item) {
-      return {
-        prompt: "Which item do you mean?",
-        agent: "done",
-        clarify: true,
-        final: true,
-      };
-    }
+    const item = reference?.item ?? resolveReference(session, request);
+    const id = reference?.id ?? item?.id;
+    if (id === undefined) return clarifyDecision("Which item do you mean?", request);
+    const title = reference?.title ?? item?.title;
     return {
-      prompt: `Original request: ${request}\nTarget item: id=${String(item.id)} title=${item.title}\nPerform the action.`,
+      prompt: `Original request: ${request}\nTarget item: id=${String(id)}${title ? ` title=${title}` : ""}\nPerform the action.`,
+      intent: request,
       agent: "bee_write",
       clarify: false,
       final: true,
+      ...(reference ? { reference } : {}),
     };
   }
 
@@ -122,9 +243,25 @@ function nextAfterData(request: string, steps: StepResult[], session: SessionSta
   };
 }
 
+function readReferenceDecision(
+  request: string,
+  reference: ResolvedReference,
+  final = true,
+): RouteDecision {
+  return {
+    prompt: `${request}\n${referenceLine(reference)}`,
+    intent: request,
+    agent: "bee_read",
+    clarify: false,
+    final,
+    reference,
+  };
+}
+
 export function fastDecision(request: string, session: SessionState, steps: StepResult[]): RouteDecision | undefined {
   const lower = request.toLowerCase();
-  const next = nextAfterData(request, steps, session);
+  const reference = resolveRequestedReference(session, request);
+  const next = nextAfterData(request, steps, session, reference);
   if (next) return next;
 
   if (steps.length > 0) {
@@ -137,30 +274,41 @@ export function fastDecision(request: string, session: SessionState, steps: Step
     };
   }
 
+  // Explicit OS actions win over Bee read/list heuristics. This is what keeps
+  // "create a reminder/note/email from this" from turning into a list.
+  const os = osActionDecision(request, session, reference);
+  if (os) return os;
+
   if (session.activeDoc && /\b(?:this|that|these|those)\b/.test(lower) && !OS_NOUN.test(lower)) {
-    return { prompt: request, agent: "bee_read", clarify: false, final: true };
+    return reference
+      ? readReferenceDecision(request, reference)
+      : { prompt: request, intent: request, agent: "bee_read", clarify: false, final: true };
   }
 
   if (/^(?:search|look up)\b/.test(lower)) {
-    return { prompt: request, agent: "bee_read", clarify: false, final: true };
+    return { prompt: request, intent: request, agent: "bee_read", clarify: false, final: true };
   }
 
-  if (GREETING.test(lower) || (!BEE_NOUN.test(lower) && !OS_NOUN.test(lower) && !BEE_WRITE_VERB.test(lower))) {
+  if (GREETING.test(lower)) {
+    return { prompt: "", agent: "done", clarify: false, final: true, conversational: true };
+  }
+
+  if (!BEE_NOUN.test(lower) && !OS_NOUN.test(lower) && !BEE_WRITE_VERB.test(lower)) {
+    if (reference) return readReferenceDecision(request, reference);
+    if (ORDINAL_REFERENCE.test(lower)) {
+      return clarifyDecision("Which item do you mean?", request);
+    }
     return { prompt: "", agent: "done", clarify: false, final: true };
   }
 
   if (/^add a todo\b|^create a task\b/.test(lower) && !/\b(?:bee|reminder|mac|macos)\b/.test(lower)) {
-    return {
-      prompt: "Do you mean a Bee todo or an Apple Reminder?",
-      agent: "done",
-      clarify: true,
-      final: true,
-    };
+    return clarifyDecision("Do you mean a Bee todo or an Apple Reminder?", request);
   }
 
   if (isCrossDomain(request)) {
     return {
       prompt: request,
+      intent: request,
       agent: BEE_LIST_VERB.test(lower) || LATEST_KIND.test(lower) ? "bee_list" : "bee_read",
       clarify: false,
       final: false,
@@ -168,55 +316,67 @@ export function fastDecision(request: string, session: SessionState, steps: Step
   }
 
   if (WRITE_TARGET.test(lower)) {
-    const item = resolveReference(session, request);
-    if (item) {
+    const resolved = resolveRequestedReference(session, request);
+    const item = resolved?.item ?? resolveReference(session, request);
+    const id = resolved?.id ?? item?.id;
+    if (id !== undefined) {
+      const title = resolved?.title ?? item?.title;
       return {
-        prompt: `Original request: ${request}\nTarget item: id=${String(item.id)} title=${item.title}\nPerform the action.`,
+        prompt: `Original request: ${request}\nTarget item: id=${String(id)}${title ? ` title=${title}` : ""}\nPerform the action.`,
+        intent: request,
         agent: "bee_write",
         clarify: false,
         final: true,
+        ...(resolved ? { reference: resolved } : {}),
       };
     }
     if (BEE_NOUN.test(lower) && LATEST_KIND.test(lower)) {
-      return { prompt: request, agent: "bee_list", clarify: false, final: false };
+      return { prompt: request, intent: request, agent: "bee_list", clarify: false, final: false };
     }
-    if (/\b(?:that|this|it)\b/.test(lower)) {
-      return {
-        prompt: "Which item do you mean?",
-        agent: "done",
-        clarify: true,
-        final: true,
-      };
+    if (/\b(?:that|this|it|first|second|third)\b/.test(lower)) {
+      return clarifyDecision("Which item do you mean?", request);
     }
+  }
+
+  if (
+    reference &&
+    !WRITE_TARGET.test(lower) &&
+    !BEE_WRITE_VERB.test(lower) &&
+    !OS_NOUN.test(lower) &&
+    !MULTI_REFERENCE.test(lower)
+  ) {
+    return readReferenceDecision(request, reference);
   }
 
   if (parseListRequest(request)) {
-    return { prompt: request, agent: "bee_list", clarify: false, final: true };
+    return { prompt: request, intent: request, agent: "bee_list", clarify: false, final: true };
   }
 
   if (BEE_NOUN.test(lower) && /\b(?:about|with|from|mention|say|said|talk|discuss|search|find)\b/.test(lower)) {
-    return { prompt: request, agent: "bee_read", clarify: false, final: true };
+    return reference
+      ? readReferenceDecision(request, reference)
+      : { prompt: request, intent: request, agent: "bee_read", clarify: false, final: true };
   }
 
   if (
     OS_NOUN.test(lower) &&
     (OS_WRITE.test(lower) || BEE_READ_VERB.test(lower) || /\b(?:what'?s|what is|how'?s|how is)\b/.test(lower)) &&
-    !/\b(?:voice notes?|bee notes?|journals?)\b/.test(lower)
+    !OS_JOURNAL.test(lower)
   ) {
-    const data = session.lastResult?.items ?? [];
-    const reference = /\b(?:that|this|it|them|these|those|first|second|third|last|latest)\b/.test(lower);
-    const context = reference && data.length > 0
-      ? `\nUse this Bee data:\n${data.map((item) => `${item.index + 1}. ${item.title}`).join("\n")}`
-      : "";
-    return { prompt: `${request}${context}`, agent: "os_action", clarify: false, final: true };
+    const hasReference = REFERENCE_WORD.test(lower);
+    return osDecision(request, session, hasReference ? reference : undefined, {
+      includeData: hasReference,
+    });
   }
 
   if (BEE_WRITE_VERB.test(lower) && BEE_NOUN.test(lower)) {
-    return { prompt: request, agent: "bee_write", clarify: false, final: true };
+    return { prompt: request, intent: request, agent: "bee_write", clarify: false, final: true };
   }
 
   if (BEE_READ_VERB.test(lower) && BEE_NOUN.test(lower)) {
-    return { prompt: request, agent: "bee_read", clarify: false, final: true };
+    return reference
+      ? readReferenceDecision(request, reference)
+      : { prompt: request, intent: request, agent: "bee_read", clarify: false, final: true };
   }
 
   return undefined;

@@ -26,6 +26,14 @@ export type SessionResult = {
   text?: string;
 };
 
+export type SessionReference = {
+  item?: SessionItem;
+  kind?: string;
+  id: string | number;
+  title?: string;
+  source?: "uri" | "title" | "pronoun" | "ordinal";
+};
+
 export type SessionAction = {
   tool: string;
   args: Record<string, unknown>;
@@ -52,9 +60,12 @@ export type SessionState = {
 
 export type RouteDecision = {
   prompt: string;
+  intent?: string;
   agent: DecisionAgent;
   clarify: boolean;
   final?: boolean;
+  conversational?: boolean;
+  reference?: SessionReference;
 };
 
 export type NeedsInput = {
@@ -73,6 +84,8 @@ export type StepResult = {
   family: string;
   tools: string[];
   text: string;
+  /** True when the step fetched one reference directly instead of listing. */
+  direct?: boolean;
   needsInput?: NeedsInput;
   unsupported?: Unsupported;
   approval?: {

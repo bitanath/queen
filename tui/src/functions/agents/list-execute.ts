@@ -1,7 +1,7 @@
 import { beeContext, isLoggedIn } from "../../utils/bee-com-bridge";
 import type { UiBridge } from "../ui-bridge";
 import { listTable, recordsFromPayload, timestampOf } from "./format";
-import { listArgs, type ListRequest } from "./list-request";
+import { inDateRange, listArgs, type ListRequest } from "./list-request";
 import { rememberRecords } from "./session";
 import type { SessionState, StepResult } from "./types";
 
@@ -55,22 +55,34 @@ export async function executeList(
   request: ListRequest,
   session: SessionState,
   bridge?: UiBridge,
+  deps: {
+    callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    loggedIn?: () => Promise<boolean>;
+  } = {},
 ): Promise<{ text: string; step: StepResult }> {
-  if (!(await isLoggedIn())) {
+  const loggedIn = deps.loggedIn ?? isLoggedIn;
+  if (!(await loggedIn())) {
     bridge?.login();
     throw new Error("You are not logged in.");
   }
 
-  const { callBeeTool } = await import("@/mcp/toolRegistry");
-  const ctx = await beeContext("prod");
+  const callTool = deps.callTool ?? (await (async () => {
+    const { callBeeTool } = await import("@/mcp/toolRegistry");
+    const ctx = await beeContext("prod");
+    return (name: string, args: Record<string, unknown>) => callBeeTool(ctx, name, args);
+  })());
   const records: Record<string, unknown>[] = [];
-  const fetchAll = request.selection === "oldest" || request.limit === undefined;
+  const fetchAll =
+    request.selection === "oldest" ||
+    request.limit === undefined ||
+    request.since !== undefined ||
+    request.until !== undefined;
   const pageCap = fetchAll ? 10 : 1;
   let cursor: string | undefined;
 
   for (let page = 0; page < pageCap; page += 1) {
     const args = { ...listArgs(request), ...(cursor ? { cursor } : {}) };
-    const payload = parsePayload(await callBeeTool(ctx, request.tool, args));
+    const payload = parsePayload(await callTool(request.tool, args));
     if (!payload) break;
     const batch = recordsFromPayload(payload);
     records.push(...batch);
@@ -79,7 +91,8 @@ export async function executeList(
     cursor = next;
   }
 
-  const selected = order(records, request);
+  const ranged = records.filter((record) => inDateRange(record, request, request.kind));
+  const selected = order(ranged, request);
   const text = listTable(request.kind, selected);
   rememberRecords(session, request.kind, selected, JSON.stringify(records));
   return {

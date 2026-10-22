@@ -7,7 +7,7 @@ import type { TopicKey } from "../functions/analytics/types";
 import { beeContext } from "../utils/bee-com-bridge";
 import { labelsAreInferred, speakerLabels } from "../utils/diarize-speaker";
 
-export type DocumentKind = "conversation" | "daily" | "journal" | "fact" | "todo" | "insight" | "location";
+export type DocumentKind = "conversation" | "daily" | "journal" | "fact" | "todo" | "suggestion" | "insight" | "location";
 
 export const DOCUMENT_KINDS: DocumentKind[] = [
   "conversation",
@@ -15,6 +15,7 @@ export const DOCUMENT_KINDS: DocumentKind[] = [
   "journal",
   "fact",
   "todo",
+  "suggestion",
   "insight",
   "location",
 ];
@@ -130,7 +131,7 @@ export function topicMeta(key: TopicKey): { label: string; emoji: string } {
   return { label: TOPIC_LABELS[key], emoji: TOPIC_EMOJI[key] };
 }
 
-function topicOf(body: string): { key: TopicKey | null; label: string; emoji: string } {
+export function topicOf(body: string): { key: TopicKey | null; label: string; emoji: string } {
   const list = tokens(body);
   let best: TopicKey | undefined;
   let bestScore = 0;
@@ -378,6 +379,24 @@ function renderTodo(r: Rec, tz: string): DocFields {
   });
 }
 
+function renderSuggestion(r: Rec, tz: string): DocFields {
+  const at = num(r["created_at"]);
+  const body = text(r["text"]);
+  const { key: topic, emoji, label } = topicOf(body);
+  return buildDoc({
+    title: `Suggestion · ${dayOnly(at, tz, "todo")}`,
+    emoji: "💡",
+    topic,
+    summary: body,
+    heading: [emoji, label, "Suggested Todo"].filter(Boolean).join(" "),
+    body,
+    meta: [
+      { key: "status", value: "pending" },
+      ...(at !== undefined ? [{ key: "created", value: whenLabel(at, tz) }] : []),
+    ],
+  });
+}
+
 function renderJournal(r: Rec, tz: string): DocFields {
   const at = num(r["created_at"]);
   const body = text(r["text"]);
@@ -468,6 +487,12 @@ const KIND_SPECS: Record<DocumentKind, KindSpec> = {
     keys: ["todos"],
     recency: (r) => num(r["created_at"]),
     render: renderTodo,
+  },
+  suggestion: {
+    tool: "bee_get_todo_suggestions",
+    keys: ["todoSuggestions"],
+    recency: (r) => num(r["created_at"]),
+    render: renderSuggestion,
   },
   insight: {
     tool: "bee_get_insights",

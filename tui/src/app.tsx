@@ -1,12 +1,11 @@
 import { createRoot } from "@opentui/react";
 import { createCliRenderer } from "@opentui/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { BeeSplash } from "./components/bee-splash";
 import { loadRecentDocuments, placeholderDocument, type QueenDocument } from "./documents";
 import { ensureAnalytics } from "./functions/analytics/store";
 import { orchestratorPrompt } from "./functions/agents";
-import type { DocFilter } from "./functions/ui-bridge";
 import { beeRefreshFor, startBeeWatch, stopBeeWatch, subscribeBeeEvents } from "./libraries/bee-watch";
 import { LoginCard } from "./interface/login-card";
 import { Toaster } from "./interface/toaster";
@@ -18,7 +17,7 @@ import { AppShell } from "./userinterface";
 import { isLoggedIn } from "./utils/bee-com-bridge";
 import { warmModel } from "./utils/queen-ffi";
 
-export const QUEEN_VERSION = "v1.2.0";
+export const QUEEN_VERSION = "v1.3.1";
 
 type Auth = "checking" | "in" | "out";
 
@@ -27,7 +26,6 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
   const [docs, setDocs] = useState<QueenDocument[]>([]);
   const [splash, setSplash] = useState<string | null>("reading your latest documents…");
   const [loaded, setLoaded] = useState(false);
-  const activeFilter = useRef<DocFilter | null>(null);
 
   
   useEffect(() => {
@@ -48,18 +46,8 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
     setDocs((prev) => prev.map((item) => (item.key === doc.key ? doc : item)));
   }, []);
 
-  //TODO: SSE changes or post tool call changes
-  const refreshDocuments = useCallback(async (filter?: DocFilter): Promise<QueenDocument[]> => {
-    if (filter) activeFilter.current = filter;
-    const effective = filter ?? activeFilter.current ?? {};
-    const records = await loadRecentDocuments({
-      limit: effective.limit ?? 20,
-      ...(effective.kinds ? { kinds: effective.kinds } : {}),
-      ...(effective.from !== undefined ? { from: effective.from } : {}),
-      ...(effective.to !== undefined ? { to: effective.to } : {}),
-      ...(effective.query ? { query: effective.query } : {}),
-      sort: "recency",
-    });
+  const refreshDocuments = useCallback(async (): Promise<QueenDocument[]> => {
+    const records = await loadRecentDocuments({ limit: 50, sort: "recency" });
     if (records.length > 0) setDocs(records);
     return records;
   }, []);
@@ -77,7 +65,7 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
     }, 0);
 
     ensureAnalytics();
-    loadRecentDocuments({ limit: 20 })
+    loadRecentDocuments({ limit: 50, sort: "recency" })
       .then((records) => {
         if (!alive) return;
         setDocs(
@@ -116,9 +104,8 @@ function QueenApp({ initialPrompt = "" }: { initialPrompt?: string }) {
     if (auth !== "in") return;
     void startBeeWatch();
     const unsubscribe = subscribeBeeEvents((event) => {
-      const active = activeFilter.current;
-      const next = beeRefreshFor(active, event);
-      if (next) void refreshDocuments(active ?? undefined); //TODO: - Keep refreshing, keep keep refreshing
+      const next = beeRefreshFor(null, event);
+      if (next) void refreshDocuments(); //TODO: - Keep refreshing, keep keep refreshing
     });
     return () => {
       unsubscribe();

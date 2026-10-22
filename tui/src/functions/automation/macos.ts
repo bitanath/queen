@@ -72,47 +72,57 @@ export const MACOS_AUTOMATIONS: AutomationDef[] = [
   },
   {
     name: "os_add_reminder",
-    description: "Add a reminder to Reminders.app. `due` is an ISO date-time (optional).",
+    description: "Add a reminder to Reminders.app. `due` is an ISO date-time (optional); `body` adds notes without repeating the title.",
     risk: "medium",
     inputSchema: {
       type: "object",
-      properties: { title: { type: "string" }, due: { type: "string" } },
+      properties: { title: { type: "string" }, due: { type: "string" }, body: { type: "string" } },
       required: ["title"],
     },
     run: async (input) => {
       const title = str(input, "title");
       const due = optStr(input, "due") ?? "";
+      const body = optStr(input, "body") ?? "";
       return jxa(
-        'var a=Application("Reminders");var l=a.defaultList();var r=a.Reminders({name:argv[0]});' +
-          'if(argv[1]){r.dueDate=new Date(argv[1]);}l.reminders.push(r);return "Reminder added.";',
-        [title, due],
+        'var a=Application("Reminders");var p={name:argv[0]};' +
+          'if(argv[1]){p.dueDate=new Date(argv[1]);}' +
+          'if(argv[2]){p.body=argv[2];}' +
+          'a.defaultList().reminders.push(a.Reminder(p));return "Reminder added.";',
+        [title, due, body],
       );
     },
   },
   {
     name: "os_add_calendar_event",
-    description: "Create a calendar event. `start`/`end` are ISO date-times (end optional).",
+    description: "Create a calendar event. `start`/`end` are ISO date-times (end optional); `description` adds notes without repeating the title.",
     risk: "medium",
     inputSchema: {
       type: "object",
-      properties: { title: { type: "string" }, start: { type: "string" }, end: { type: "string" } },
+      properties: {
+        title: { type: "string" },
+        start: { type: "string" },
+        end: { type: "string" },
+        description: { type: "string" },
+      },
       required: ["title", "start"],
     },
     run: async (input) => {
       const title = str(input, "title");
       const start = str(input, "start");
       const end = optStr(input, "end") ?? start;
+      const description = optStr(input, "description") ?? "";
       return jxa(
         'var a=Application("Calendar");var c=a.calendars[0];' +
-          "var e=a.Event({summary:argv[0],startDate:new Date(argv[1]),endDate:new Date(argv[2])});" +
-          'c.events.push(e);return "Event added.";',
-        [title, start, end],
+          "var p={summary:argv[0],startDate:new Date(argv[1]),endDate:new Date(argv[2])};" +
+          'if(argv[3]){p.description=argv[3];}' +
+          'c.events.push(a.Event(p));return "Event added.";',
+        [title, start, end, description],
       );
     },
   },
   {
     name: "os_create_note",
-    description: "Create a note in Notes.app.",
+    description: "Create a note in Notes.app. `body` carries the remaining details and must not repeat the title.",
     risk: "medium",
     inputSchema: {
       type: "object",
@@ -121,7 +131,8 @@ export const MACOS_AUTOMATIONS: AutomationDef[] = [
     },
     run: async (input) =>
       jxa(
-        'var a=Application("Notes");var n=a.Note({name:argv[0],body:argv[1]||""});' +
+        'var a=Application("Notes");var b=(argv[1]||"").replace(/\\n/g,"<br>");' +
+          'var n=a.Note({name:argv[0],body:b});' +
           'a.defaultAccount().notes.push(n);return "Note created.";',
         [str(input, "title"), optStr(input, "body") ?? ""],
       ),

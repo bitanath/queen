@@ -60,8 +60,8 @@ const DEFS: Definition[] = [
   { resource: "todos", subcommand: "complete", subtitle: "mark this todo complete", kind: "todo" },
   { resource: "todos", subcommand: "delete", subtitle: "delete this todo", kind: "todo" },
   { resource: "todos", subcommand: "suggestions", subtitle: "review suggested todos", scope: "collection" },
-  { resource: "todos", subcommand: "accept-suggestion", subtitle: "accept a suggested todo", kind: "todo" },
-  { resource: "todos", subcommand: "dismiss-suggestion", subtitle: "dismiss a suggested todo", kind: "todo" },
+  { resource: "todos", subcommand: "accept-suggestion", subtitle: "accept a suggested todo", kind: "suggestion" },
+  { resource: "todos", subcommand: "dismiss-suggestion", subtitle: "dismiss a suggested todo", kind: "suggestion" },
 
   //MARK other resources (collection-wide)
   { resource: "external-access", subcommand: "list", subtitle: "list external data access", scope: "collection" },
@@ -89,9 +89,10 @@ const DEFS: Definition[] = [
 ];
 
 export const ACTION_CATALOG: QueenAction[] = DEFS.map((def) => {
-  const label = def.subcommand ? `${def.resource} ${def.subcommand}` : def.resource;
+  const id = def.subcommand ? `${def.resource} ${def.subcommand}` : def.resource;
+  const label = def.subcommand === "get" ? `${def.resource} refresh` : id;
   return {
-    id: label,
+    id,
     label,
     subtitle: def.subtitle,
     docKinds: def.kind ? [def.kind] : [],
@@ -101,8 +102,23 @@ export const ACTION_CATALOG: QueenAction[] = DEFS.map((def) => {
   };
 });
 
+const ACTIONABLE = new Set([
+  "get",
+  "transcript",
+  "related",
+  "complete",
+  "delete",
+  "confirm",
+  "accept-suggestion",
+  "dismiss-suggestion",
+]);
+
 export function actionsForDocument(kind: DocumentKind): QueenAction[] {
   return ACTION_CATALOG.filter(
-    (action) => action.docKinds.includes(kind) && action.scope === "document",
+    (action) =>
+      action.scope === "document" &&
+      action.docKinds.includes(kind) &&
+      action.subcommand !== undefined &&
+      ACTIONABLE.has(action.subcommand),
   );
 }

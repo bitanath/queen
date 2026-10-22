@@ -20,7 +20,7 @@ import { factorMatrix } from "./functions/analytics/factor-view";
 import { getTopicAnalytics } from "./functions/analytics/store";
 import { useAnalytics } from "./functions/analytics/use-analytics";
 import { createChatSession, type ChatToolInfo, type ChatSession } from "./functions/chat";
-import type { DocFilter, UiBridge } from "./functions/ui-bridge";
+import type { UiBridge } from "./functions/ui-bridge";
 import { LoginCard } from "./interface/login-card";
 import { useToast } from "./interface/toaster";
 import { labelsAreInferred, speakerLabels } from "./utils/diarize-speaker";
@@ -77,15 +77,14 @@ export function Screen({
   docs: QueenDocument[];
   initialPrompt?: string;
   onDocumentUpdate?: (doc: QueenDocument) => void;
-  onRefresh?: (filter?: DocFilter) => Promise<QueenDocument[]>;
+  onRefresh?: () => Promise<QueenDocument[]>;
 }) {
   const theme = useTheme();
   const renderer = useRenderer();
   const { width } = useTerminalDimensions();
   const [selectedKey, setSelectedKey] = useState(docs[0]?.key ?? "");
   const [mode, setMode] = useState<SidebarMode>("actions");
-  const [focus, setFocus] = useState<Focus>("docs");
-  const [used, setUsed] = useState<Set<string>>(() => new Set());
+  const [focus, setFocus] = useState<Focus>("actions");
   const [splashWords, setSplashWords] = useState<string | null>(null);
   const [actionIndex, setActionIndex] = useState(0);
   const splashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -100,10 +99,7 @@ export function Screen({
   const inputRef = useRef<TextareaRenderable | null>(null);
 
   const doc = docs.find((item) => item.key === selectedKey) ?? docs[0];
-  const actions = useMemo(
-    () => (doc ? actionsForDocument(doc.kind).filter((action) => !used.has(`${doc.key}:${action.id}`)) : []),
-    [doc, used],
-  );
+  const actions = doc ? actionsForDocument(doc.kind) : [];
 
   const [transcriptLoadingKey, setTranscriptLoadingKey] = useState<string | null>(null);
   const transcriptPending = useRef<Set<string>>(new Set());
@@ -204,25 +200,16 @@ export function Screen({
     resolve: (choice: string) => void;
   } | null>(null);
 
-  const refreshAndSelect = useCallback(
-    async (filter?: DocFilter) => {
-      if (!onRefresh) return;
-      const records = await onRefresh(filter);
-      if (records[0]) setSelectedKey(records[0].key);
-    },
-    [onRefresh],
-  );
-
   const bridge = useMemo<UiBridge>(
     () => ({
-      showDocuments: (filter) => void refreshAndSelect(filter),
+      showDocuments: () => void onRefresh?.(),
       refreshDocuments: () => void onRefresh?.(),
       openAnswer: (view) => openAnswer(view),
       toast: (message, variant) => toast(message, variant ? { variant } : undefined),
       login: () => setLoginOpen(true),
       clarify: (question, options) => new Promise<string>((resolve) => setClarify({ question, options, resolve })),
     }),
-    [refreshAndSelect, onRefresh, openAnswer, toast],
+    [onRefresh, openAnswer, toast],
   );
 
   const runAction = useCallback(
@@ -232,16 +219,28 @@ export function Screen({
         setLoginOpen(true);
         return;
       }
+
+      const target =
+        action.scope === "document" &&
+        (action.docKinds.length === 0 || action.docKinds.includes(doc.kind))
+          ? doc
+          : undefined;
+      if (action.scope === "document" && !target) {
+        openAnswer({
+          title: action.label,
+          markdown: `Select a ${action.docKinds.join(" or ")} document to use this action.`,
+        });
+        return;
+      }
+
       clearSplash();
       setSplash(`running ${action.label}…`);
       try {
-        const outcome = await executeAction(action, doc);
-        if (outcome.refresh === true) void onRefresh?.();
-        else if (outcome.refresh) await refreshAndSelect(outcome.refresh);
+        const outcome = await executeAction(action, target);
+        if (outcome.refresh) void onRefresh?.();
         if (outcome.view) openAnswer(outcome.view);
         else if (outcome.markdown) openAnswer({ title: outcome.title, markdown: outcome.markdown });
         if (outcome.toast) toast(outcome.toast);
-        setUsed((prev) => new Set(prev).add(`${doc.key}:${action.id}`));
       } catch (e) {
         toast(e instanceof Error ? e.message : String(e), { variant: "error" });
       } finally {
@@ -249,7 +248,7 @@ export function Screen({
         setSplash(null);
       }
     },
-    [doc, onRefresh, refreshAndSelect, openAnswer, toast],
+    [doc, onRefresh, openAnswer, toast],
   );
 
   useEffect(() => {
@@ -308,8 +307,8 @@ export function Screen({
     chatCancel.current = false;
 
     let session = chatSession.current;
-    if (session === null || session.key !== doc.key) {
-      session = await createChatSession(doc, bridge);
+    if (session === null) {
+      session = await createChatSession(bridge);
       chatSession.current = session;
     }
 

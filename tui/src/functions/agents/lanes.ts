@@ -26,10 +26,13 @@ For "last N" use a list tool with limit N. For "latest" use limit 1.
 Do not write. Do not invent items. Return the result plainly.`,
   bee_write: `You perform Bee write actions with the provided tools.
 You may only act on IDs that are present in the request or the supplied context. Never invent an ID.
+Call the appropriate tool immediately when the request has enough information. Do not narrate or promise the action.
 If a required value is missing, stop and ask for it. Do not retry a denied action.
 Return the tool result plainly.`,
   os_action: `You perform operating-system actions with the provided tools.
 Use only values present in the request or supplied context. Never invent an email address, phone number, path, or title.
+Call the appropriate tool immediately when the request has enough information. Do not narrate or promise the action.
+When a tool takes both a title/subject and a body, put the item label in the title/subject and the remaining details in the body. Never repeat the title in the body.
 If a required value is missing, stop and ask for it. Do not retry a denied action.
 Return the tool result plainly.`,
 };
