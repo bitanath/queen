@@ -285,7 +285,9 @@ ELTHUR_SHA="$(git -C "$ELTHUR" rev-parse HEAD 2>/dev/null || echo unknown)"
 echo "==> elthur: ${ELTHUR_SHA:0:12}"
 
 echo "==> stage dylib"
-cp "$DYLIB" "$TUI/libelthur.dylib"
+if [ ! "$DYLIB" -ef "$TUI/libelthur.dylib" ]; then
+  cp "$DYLIB" "$TUI/libelthur.dylib"
+fi
 codesign --force -s - "$TUI/libelthur.dylib"
 
 echo "==> bundle"

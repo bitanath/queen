@@ -36,11 +36,21 @@ type ChatMessage = {
   role: "you" | "queen";
   text: string;
   thinking?: string;
+  status?: string;
   streaming?: boolean;
   tools?: ChatToolInfo[];
   promptTokens?: number;
   ttftMs?: number;
 };
+
+function statusLabel(status: { phase: string; agent?: string; family?: string }): string {
+  if (status.phase === "ask") return "ask";
+  if (status.phase === "orchestrator") return "orchestrator";
+  if (status.phase === "select") return `${status.agent ?? "agent"} · ${status.family ?? "tools"}`;
+  if (status.phase === "agent") return status.agent ?? "agent";
+  if (status.phase === "approval") return `approval · ${status.family ?? status.agent ?? "tool"}`;
+  return "";
+}
 
 const TRANSCRIPT_SPINNER = ["◐", "◓", "◑", "◒"]; //FIXME This is one way to do it
 
@@ -306,9 +316,12 @@ export function Screen({
     let finalRaw = "";
     try {
       await session.send(question, {
+        onAck: (ack) => updateMessage(answerId, { text: ack.trimStart(), status: "ask" }),
+        onThinking: (thought) => updateMessage(answerId, { thinking: thought }),
+        onStatus: (status) => updateMessage(answerId, { status: statusLabel(status) }),
         onText: (raw) => {
           finalRaw = raw;
-          updateMessage(answerId, { thinking: lastThink(raw) ?? "", text: stripThinking(raw).trimStart() });
+          updateMessage(answerId, { thinking: lastThink(raw) ?? "", text: stripThinking(raw).trimStart(), status: "" });
         },
         onTool: (event) => upsertTool(answerId, event.info),
         onMeta: (meta) => updateMessage(answerId, { promptTokens: meta.promptTokens, ttftMs: meta.ttftMs }),
@@ -317,11 +330,12 @@ export function Screen({
       updateMessage(answerId, {
         thinking: lastThink(finalRaw) ?? "",
         text: stripThinking(finalRaw).trim() || "(no response)",
+        status: "",
         streaming: false,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      updateMessage(answerId, { text: `error: ${message}`, streaming: false });
+      updateMessage(answerId, { text: `error: ${message}`, status: "", streaming: false });
     } finally {
       setChatBusy(false);
     }
@@ -566,6 +580,9 @@ export function Screen({
                         <text fg={message.role === "you" ? theme.colors.accent : theme.colors.primary}>
                           <b>{message.role === "you" ? "you" : "queen"}</b>
                         </text>
+                        {message.role === "queen" && message.status && (
+                          <text fg={theme.colors.mutedForeground}>{message.status}</text>
+                        )}
                         {message.role === "queen" && (message.streaming === true || (message.thinking ?? "").length > 0) && (
                           <box marginBottom={1}>
                             <ThinkingBlock

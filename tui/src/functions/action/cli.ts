@@ -1,20 +1,19 @@
-import { Message, TextBlock, type JSONSchema, type ToolSpec } from "@strands-agents/sdk";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { callBeeTextTool } from "@/commands/mcpToolOutput";
 
 import { conversationDocument, loadRecentDocuments, type DocumentKind } from "../../documents";
-import { loadConfig, withSearchDefaults } from "../../documents/config";
+import { loadConfig } from "../../documents/config";
 import { withInferredSpeakers } from "../../utils/diarize-speaker";
 import { relevanceScores } from "../analytics/relevance";
 import type { CardAlign, CardSection, CardSpec } from "../../interface/scrollback-card";
 import { beeContext, buildTable, captureConsole, humanDate } from "../../utils/bee-com-bridge";
-import { generate } from "../../utils/queen-ffi";
-import { stripThinking } from "../../utils/stream-status";
-import { planRoute } from "../agents/orchestrator";
-import { stripToolMarkup } from "../tool-definitions";
 import { ACTION_CATALOG } from "./catalog";
+import { AgentRunner } from "../agents/runner";
+import { beeUri } from "../agents/format";
+import { LANE_LABELS } from "../agents/lanes";
+import type { StatusListener } from "../agents/types";
 import {
   EXTRA_COMMANDS,
   cliMenu,
@@ -28,15 +27,15 @@ import { errorSpec, externalSpec } from "./external";
 
 export type CliEmit = (spec: CardSpec) => Promise<void>;
 
+export type ThinkingListener = (text: string) => void;
+
 export type CliDeps = {
   subcommandSpec?: (name: string, argv: string[], options?: { json?: boolean }) => Promise<CardSpec>;
   externalSpec?: (name: string, argv: string[], emit?: CliEmit) => Promise<CardSpec>;
   catalogSpec?: (id: string) => Promise<CardSpec>;
   latestSpec?: (kinds: DocumentKind[]) => Promise<CardSpec>;
   irSpec?: (query: string, filter?: SearchFilter) => Promise<CardSpec>;
-  actionSpec?: (worker: CliWorker, prompt: string) => Promise<CardSpec>;
-  chatSpec?: (prompt: string) => Promise<CardSpec>;
-  agentSpec?: (prompt: string) => Promise<CardSpec>;
+  agentSpec?: (prompt: string, onThinking?: ThinkingListener, onStatus?: StatusListener) => Promise<CardSpec>;
   uriSpec?: (uri: string, options?: { json?: boolean }) => Promise<CardSpec>;
 };
 
@@ -45,6 +44,8 @@ export type CliOptions = {
   deps?: CliDeps;
   json?: boolean;
   argv?: readonly string[];
+  onThinking?: ThinkingListener;
+  onStatus?: StatusListener;
 };
 
 export type CliResult = {
@@ -512,17 +513,18 @@ function scoreSearchResults(
   const showRelevance = loadConfig().showRelevanceScores;
   const cardRows = matched
     .filter((row) => row.summary.length > 0)
-    .slice(0, 10)
-    .map((row) =>
-      showRelevance
-        ? [row.when, `${Math.round(row.combined * 100)}%`, row.summary]
-        : [row.when, row.summary],
-    );
+    .map((row) => {
+      const kind = typeof row.entry["type"] === "string" ? row.entry["type"] : "conversation";
+      const uri = beeUri(kind, row.entry["id"]) ?? "—";
+      return showRelevance
+        ? [row.when, `${Math.round(row.combined * 100)}%`, row.summary, uri]
+        : [row.when, row.summary, uri];
+    });
   const section: CardSection | undefined =
     cardRows.length > 0
       ? {
           kind: "table",
-          columns: showRelevance ? ["when", "rel.", "summary"] : ["when", "summary"],
+          columns: showRelevance ? ["when", "rel.", "summary", "uri"] : ["when", "summary", "uri"],
           rows: cardRows,
         }
       : undefined;
@@ -539,177 +541,73 @@ function scoreSearchResults(
   return { section, payload };
 }
 
-export async function chatSpec(prompt: string): Promise<CardSpec> {
-  const text = stripThinking(stripToolMarkup(generate({ prompt }))).trim();
-  return {
-    title: "queen",
-    subtitle: "answer",
-    sections: [{ kind: "markdown", content: text.length > 0 ? text : "(no response)" }],
-    data: { answer: text },
-  };
-}
-
-function resultText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object") {
-    const content = (value as { content?: readonly { text?: unknown }[] }).content;
-    if (Array.isArray(content)) {
-      return content
-        .map((item) => (typeof item?.text === "string" ? item.text : JSON.stringify(item)))
-        .join("\n");
-    }
-    return JSON.stringify(value, null, 2);
-  }
-  return String(value);
-}
-
-function tableFromText(text: string): CardSection | undefined {
-  try {
-    const table = buildTable(JSON.parse(text) as unknown);
-    return table ? sectionForTable(table) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function workerTitle(worker: CliWorker): string {
   return worker;
 }
 
-type CliTool = {
-  name: string;
-  description: string;
-  inputSchema: JSONSchema;
-  invoke: (args: Record<string, unknown>) => Promise<unknown>;
-};
+export async function agentSpec(
+  prompt: string,
+  onThinking?: ThinkingListener,
+  onStatus?: StatusListener,
+): Promise<CardSpec> {
+  const runner = new AgentRunner({ mode: "cli" });
+  const turn = await runner.run(prompt, {
+    onStatus: (status) => {
+      onStatus?.(status);
+    },
+    onAck: (ack) => onThinking?.(ack),
+    onThinking: (thought) => onThinking?.(thought),
+  });
 
-function trimDescription(text: string): string {
-  const clean = text.replace(/\s+/g, " ").trim();
-  const first = clean.split(/(?<=\.)\s/, 1)[0] ?? clean;
-  return first.length > 100 ? `${first.slice(0, 97).trimEnd()}...` : first;
-}
-
-async function cliTools(worker: CliWorker): Promise<CliTool[]> {
-  if (worker === "bee") {
-    const [{ BEE_MCP_TOOLS }, { callBeeTool }, ctx] = await Promise.all([
-      import("@/mcp/toolDefinitions"),
-      import("@/mcp/toolRegistry"),
-      beeContext("prod"),
-    ]);
-    return BEE_MCP_TOOLS.filter((entry) => entry.name !== "bee_get_recent_activity").map((entry) => ({
-      name: entry.name,
-      description: trimDescription(entry.description),
-      inputSchema: entry.inputSchema as JSONSchema,
-      invoke: (args) => {
-        const input = entry.name === "bee_search" ? withSearchDefaults(args) : args;
-        return callBeeTool(
-          ctx,
-          entry.name,
-          input && typeof input === "object" && !Array.isArray(input)
-            ? (input as Record<string, unknown>)
-            : args,
-        );
-      },
-    }));
-  }
-  const { automationDefs } = await import("../automation");
-  return automationDefs().map((entry) => ({
-    name: entry.name,
-    description: trimDescription(entry.description),
-    inputSchema: entry.inputSchema,
-    invoke: (args) => entry.run(args),
-  }));
-}
-
-async function selectAndRun(worker: CliWorker, prompt: string): Promise<{ name: string; result: string }> {
-  const [{ riskOf }, { ElthurModel }] = await Promise.all([
-    import("../tools-execution"),
-    import("../strands-model"),
-  ]);
-  const tools = await cliTools(worker);
-  if (tools.length === 0) throw new Error(`No ${worker} tools are available on this platform.`);
-
-  const system = `You are the "${worker}" tool selector for Queen. Choose exactly one tool and fill its arguments. Never explain. If no tool fits, output nothing.
-For "last/latest <item>" use that kind's list tool with limit 1. For "last N <items>" use limit N. Do not use bee_get_recent_activity when the request names a single kind.`;
-  const model = new ElthurModel({ maxTokens: 256, systemPrompt: system });
-  const messages: Message[] = [
-    new Message({ role: "user", content: [new TextBlock(prompt)] }),
-  ];
-  const specs: ToolSpec[] = tools.map(({ name, description, inputSchema }) => ({
-    name,
-    description,
-    inputSchema,
-  }));
-
-  let name = "";
-  let argsText = "";
-  for await (const event of model.stream(messages, { toolSpecs: specs, systemPrompt: system })) {
-    const record = event as unknown as Record<string, unknown>;
-    if (record["type"] === "modelContentBlockStartEvent") {
-      const start = record["start"] as { type?: string; name?: string } | undefined;
-      if (start?.type === "toolUseStart" && typeof start.name === "string") {
-        name = start.name;
-        argsText = "";
-      }
-    } else if (record["type"] === "modelContentBlockDeltaEvent") {
-      const delta = record["delta"] as { type?: string; input?: string } | undefined;
-      if (delta?.type === "toolUseInputDelta" && typeof delta.input === "string") {
-        argsText += delta.input;
-      }
-    }
-  }
-
-  if (name.length === 0) {
-    throw new Error("I couldn't tell which action you meant. Try `queen help`, or ask in the TUI.");
-  }
-  const tool = tools.find((item) => item.name === name);
-  if (!tool) throw new Error(`Selected an unknown tool: ${name}`);
-  if (riskOf(name) === "high") {
-    throw new Error(`"${name}" is high-risk, so it needs the TUI. Run \`queen\` and ask in chat.`);
-  }
-
-  let args: Record<string, unknown> = {};
-  if (argsText.trim().length > 0) {
-    try {
-      args = JSON.parse(argsText) as Record<string, unknown>;
-    } catch {
-      throw new Error(`Could not parse the arguments for ${name}.`);
-    }
-  }
-  return { name, result: resultText(await tool.invoke(args)) };
-}
-
-export async function actionSpec(worker: CliWorker, prompt: string): Promise<CardSpec> {
-  const { name, result } = await selectAndRun(worker, prompt);
-  const text = stripThinking(stripToolMarkup(result)).trim();
-  const table = tableFromText(text);
-  return {
-    title: workerTitle(worker),
-    subtitle: name,
-    sections: [table ?? { kind: "markdown", content: text.length > 0 ? text : "done" }],
-    data: { tool: name, result: text },
+  const flow = turn.steps.length > 0
+    ? turn.steps.map((step) => `${LANE_LABELS[step.agent]} · ${step.family}`).join(" → ")
+    : "conversation";
+  const data = {
+    answer: turn.text,
+    ack: turn.ack,
+    flow,
+    steps: turn.steps,
+    session: turn.session,
+    ...(turn.clarification ? { clarification: turn.clarification } : {}),
+    ...(turn.approval ? { approval: turn.approval } : {}),
+    ...(turn.unsupported ? { unsupported: turn.unsupported } : {}),
   };
-}
 
-export async function agentSpec(prompt: string): Promise<CardSpec> {
-  const plan = planRoute(prompt);
-  if (plan.kind === "clarify") {
-    const spec = clarifySpec(prompt, [
-      `queen "${prompt} in Bee"`,
-      `queen "${prompt} on this computer"`,
-    ]);
-    return { ...spec, subtitle: "clarify" };
-  }
-  if (plan.kind === "worker") {
-    const spec = await actionSpec(plan.worker, prompt);
+  if (turn.approval) {
     return {
-      ...spec,
-      title: "queen",
-      subtitle: `${plan.worker} · ${spec.subtitle ?? "tool"}`,
+      title: "approval needed",
+      subtitle: turn.approval.tool,
+      sections: [
+        {
+          kind: "text",
+          text: "This action needs approval. Run `queen` and ask again from the TUI chat.",
+        },
+      ],
+      data,
     };
   }
-  const spec = await chatSpec(prompt);
-  return { ...spec, subtitle: "direct answer" };
+  if (turn.unsupported) {
+    return {
+      title: "unsupported",
+      subtitle: turn.unsupported.reason,
+      sections: [{ kind: "text", text: `${turn.unsupported.reason} ${turn.unsupported.suggestion}` }],
+      data,
+    };
+  }
+  if (turn.clarification) {
+    return {
+      title: "clarify",
+      subtitle: turn.clarification,
+      sections: [{ kind: "text", text: turn.clarification }],
+      data,
+    };
+  }
+  return {
+    title: "queen",
+    subtitle: flow,
+    sections: [{ kind: "markdown", content: turn.text.trim() || "(no response)" }],
+    data,
+  };
 }
 
 function titleFor(decision: CliDecision): string {
@@ -788,7 +686,7 @@ function footerFor(
     case "action":
       return `${time} · ${decision.worker} agent${spec.subtitle ? ` · ${spec.subtitle}` : ""}`;
     case "agent":
-      return `${time} · orchestrator · ${spec.subtitle ?? "direct answer"}`;
+      return `${time} · ${spec.subtitle ?? "conversation"}`;
     case "uri":
       return `${time} · bee · ${decision.uri}`;
     case "chat":
@@ -868,6 +766,8 @@ export async function runCli(prompt: string, options: CliOptions = {}): Promise<
   const decision: CliDecision =
     cleanPrompt.length === 0 && json ? { kind: "help" } : decide(cleanPrompt, options.argv);
   const emit = json ? undefined : options.emit;
+  const onThinking = json ? undefined : options.onThinking;
+  const onStatus = json ? undefined : options.onStatus;
   const deps = options.deps ?? {};
   const started = performance.now();
 
@@ -905,11 +805,15 @@ export async function runCli(prompt: string, options: CliOptions = {}): Promise<
       case "ir":
         return finish(await (deps.irSpec ?? irSpec)(decision.query, decision.filter), true);
       case "action":
-        return finish(await (deps.actionSpec ?? actionSpec)(decision.worker, decision.prompt), true);
       case "chat":
-        return finish(await (deps.chatSpec ?? chatSpec)(decision.prompt), true);
-      case "agent":
-        return finish(await (deps.agentSpec ?? agentSpec)(decision.prompt), true);
+      case "agent": {
+        const spec = await (deps.agentSpec ?? agentSpec)(decision.prompt, onThinking, onStatus);
+        const payload = spec.data as
+          | { clarification?: unknown; approval?: unknown; unsupported?: unknown }
+          | undefined;
+        const ok = !payload?.clarification && !payload?.approval && !payload?.unsupported;
+        return finish(spec, ok);
+      }
       case "uri":
         return finish(await (deps.uriSpec ?? uriSpec)(decision.uri, { json }), true);
       case "clarify":

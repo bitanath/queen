@@ -57,8 +57,32 @@ First launch is slow
 The model is embedded in the executable, so macOS verifies the entire signed
 file. Subsequent launches will be way faster.
 
+Build from Scratch (MacOS only)
+--------------------------------
+
+Requires Apple Silicon macOS, Bun, Xcode command line tools, and
+``tui/libelthur.dylib``.
+
+.. code-block:: bash
+
+   git clone https://github.com/bitanath/queen.git
+   cd queen
+   git submodule update --init bee-cli
+   ./models/download.sh #download the LFM model, or any other supported model like Qwen 3.5 4B etc
+   ./build.sh --dylib tui/libelthur.dylib #build using the provided dylib
+
+
 Credentials
 -----------
 
 Tokens are stored as dotfiles under ``~/.bee/`` (``token-<env>``, mode 0600) rather than the macOS Keychain. The binary is re-signed on every build, so the
 Keychain would prompt for your login password on each launch.
+
+License
+-------
+
+Queen is free to use under the Apache License 2.0; see ``LICENSE``. The project itself does not charge for use and will never hit the LFM 2.5 limit of USD 10M
+commercial usage allowed. However, LFM does have a commercial usage cap of USD 10M.
+
+The embedded LFM2.5 model weights remain under the
+`LFM Open License v1.0 <https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/blob/main/LICENSE>`_.

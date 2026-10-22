@@ -112,7 +112,7 @@ export async function stopBeeMcp(): Promise<void> {
 
 
 //FIXME: Aggressive: keep only the first sentence of the tool description.
-function trimDescription(text: string): string {
+export function trimToolDescription(text: string): string {
   const clean = text.replace(/\s+/g, " ").trim();
   const first = clean.split(/(?<=\.)\s/, 1)[0] ?? clean;
   const base = first.length > 0 ? first : clean;
@@ -120,13 +120,13 @@ function trimDescription(text: string): string {
 }
 
 //FIXME: Aggressive: drop every nested `description` key, keep schema structure.
-function stripDescriptions(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripDescriptions);
+export function stripSchemaDescriptions(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripSchemaDescriptions);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
       if (key === "description") continue;
-      out[key] = stripDescriptions(val);
+      out[key] = stripSchemaDescriptions(val);
     }
     return out;
   }
@@ -166,11 +166,11 @@ class TimedMcpTool extends Tool {
     this.inner = inner;
     this.ms = ms;
     this.name = inner.name;
-    this.description = trimDescription(inner.description);
+    this.description = trimToolDescription(inner.description);
     this.toolSpec = {
       ...inner.toolSpec,
       description: this.description,
-      inputSchema: stripDescriptions(inner.toolSpec.inputSchema) as JSONSchema,
+      inputSchema: stripSchemaDescriptions(inner.toolSpec.inputSchema) as JSONSchema,
     };
   }
 

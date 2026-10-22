@@ -1,31 +1,23 @@
-import { Agent, configureLogging } from "@strands-agents/sdk";
+import { configureLogging } from "@strands-agents/sdk";
 
-import { ElthurModel } from "./strands-model";
-import { createRoutedQueenAgent } from "./tools-execution";
-import { ensureBeeMcp } from "../libraries/bee-mcp";
 import type { QueenDocument } from "../documents";
 import type { UiBridge } from "./ui-bridge";
+import { AgentRunner } from "./agents/runner";
+import { createSession } from "./agents/session";
+import type { AgentStatus, ToolRunEvent } from "./agents/types";
 
 configureLogging({
   debug: () => {},
   info: () => {},
   warn: () => {},
   error: () => {},
-}); //HACK null out the loggers to prevent corrupting the console render
+});
 
 export type ChatToolStatus = "running" | "success" | "error";
 
-export type ChatToolInfo = {
-  id: string;
-  name: string;
-  args?: Record<string, unknown>;
-  status: ChatToolStatus;
-  result?: string;
-  error?: string;
-  durationMs?: number;
-};
+export type ChatToolInfo = ToolRunEvent["info"];
 
-export type ChatToolEvent = { kind: "start" | "end"; info: ChatToolInfo };
+export type ChatToolEvent = ToolRunEvent;
 
 export type ChatMeta = {
   promptTokens?: number;
@@ -37,8 +29,11 @@ export type ChatMeta = {
 };
 
 export type ChatCallbacks = {
+  onAck?: (text: string) => void;
   onText: (rawSoFar: string) => void;
+  onThinking?: (text: string) => void;
   onTool: (event: ChatToolEvent) => void;
+  onStatus?: (status: AgentStatus) => void;
   onMeta?: (meta: ChatMeta) => void;
   isCancelled?: () => boolean;
 };
@@ -48,132 +43,26 @@ export type ChatSession = {
   send: (question: string, callbacks: ChatCallbacks) => Promise<void>;
 };
 
-type ResultBlock = { content?: readonly { type?: string; text?: string; json?: unknown }[] };
-
-function resultText(block: unknown): string {
-  const content = (block as ResultBlock | undefined)?.content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((item) =>
-      item.type === "textBlock" ? item.text ?? "" : item.type === "jsonBlock" ? JSON.stringify(item.json) : "",
-    )
-    .filter((line) => line.length > 0)
-    .join("\n");
-}
-
-function firstTurnPrompt(doc: QueenDocument, question: string): string {
-  const date = doc.meta.find((item) => item.key === "when")?.value ?? "";
-  return [
-    `Title: ${doc.title}`,
-    `Subtitle: ${doc.subtitle}`,
-    `Date: ${date}`,
-    `Document: ${doc.key}`,
-    "",
-    doc.summary,
-    "",
-    `Current time: ${new Date().toISOString()}`,
-    "",
-    "QUESTION",
-    question,
-  ].join("\n");
-}
-
-async function streamAgent(
-  agent: Agent,
-  getPrompt: (question: string) => string,
-  question: string,
-  callbacks: ChatCallbacks,
-): Promise<void> {
-  const controller = new AbortController();
-  const started = new Map<string, number>();
-  let raw = "";
-  let metaSent = false;
-
-  const poll = setInterval(() => {
-    if (callbacks.isCancelled?.()) controller.abort();
-  }, 150);
-
-  try {
-    for await (const event of agent.stream(getPrompt(question), { cancelSignal: controller.signal })) {
-      if (callbacks.isCancelled?.()) controller.abort();
-      switch (event.type) {
-        case "modelStreamUpdateEvent": {
-          const inner = event.event;
-          if (inner.type === "modelContentBlockDeltaEvent" && inner.delta.type === "textDelta") {
-            raw += inner.delta.text;
-            callbacks.onText(raw);
-          } else if (inner.type === "modelMetadataEvent" && !metaSent) {
-            metaSent = true;
-            const trace = inner.trace as ChatMeta | undefined;
-            if (trace) callbacks.onMeta?.(trace);
-          }
-          break;
-        }
-        case "beforeToolCallEvent": {
-          const id = event.toolUse.toolUseId;
-          started.set(id, Date.now());
-          callbacks.onTool({
-            kind: "start",
-            info: {
-              id,
-              name: event.toolUse.name,
-              args: (event.toolUse.input ?? {}) as Record<string, unknown>,
-              status: "running",
-            },
-          });
-          break;
-        }
-        case "afterToolCallEvent": {
-          const id = event.toolUse.toolUseId;
-          const began = started.get(id);
-          callbacks.onTool({
-            kind: "end",
-            info: {
-              id,
-              name: event.toolUse.name,
-              args: (event.toolUse.input ?? {}) as Record<string, unknown>,
-              status: event.error ? "error" : "success",
-              result: resultText(event.result),
-              ...(event.error ? { error: event.error.message } : {}),
-              ...(began !== undefined ? { durationMs: Date.now() - began } : {}),
-            },
-          });
-          break;
-        }
-        default:
-          break;
-      }
-    }
-  } finally {
-    clearInterval(poll);
-  }
-}
-
 export async function createChatSession(doc: QueenDocument, bridge: UiBridge): Promise<ChatSession> {
-  await ensureBeeMcp();
-  const model = new ElthurModel({ systemPrompt: undefined, maxTokens: 1024 });
-  const routed = createRoutedQueenAgent(model, bridge);
+  const session = createSession({
+    kind: doc.kind,
+    id: doc.id,
+    title: doc.title,
+    summary: doc.summary,
+  });
+  const runner = new AgentRunner({ bridge, mode: "tui", session });
 
-  let started = false;
   return {
     key: doc.key,
     send: async (question, callbacks) => {
-      const base = started ? question : firstTurnPrompt(doc, question);
-      // Classify the question itself; the first-turn document is background,
-      // not part of the intent.
-      const plan = routed.plan(question, doc.kind);
-
-      if (plan.kind === "clarify") {
-        // Deterministic: ask once, then dispatch the choice. No model turn.
-        const choice = await bridge.clarify("Where should I do this?", ["Bee", "Mac"]);
-        const target = /mac|apple|reminder|note|calendar|computer|host/i.test(choice) ? "mac" : "bee";
-        await streamAgent(routed.worker(target) ?? routed.chat(), () => base, question, callbacks);
-      } else {
-        const agent =
-          plan.kind === "worker" ? routed.worker(plan.worker) ?? routed.chat() : routed.chat();
-        await streamAgent(agent, () => base, question, callbacks);
-      }
-      started = true;
+      await runner.run(question, {
+        onAck: callbacks.onAck,
+        onText: callbacks.onText,
+        onThinking: callbacks.onThinking,
+        onTool: callbacks.onTool,
+        ...(callbacks.onStatus ? { onStatus: callbacks.onStatus } : {}),
+        ...(callbacks.isCancelled ? { isCancelled: callbacks.isCancelled } : {}),
+      });
     },
   };
 }

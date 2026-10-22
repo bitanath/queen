@@ -27,6 +27,6 @@ export function allowAlways(name: string): void {
 
 export async function requestApproval(req: Omit<ApprovalRequest, "id">): Promise<boolean> {
   if (alwaysAllow.has(req.name)) return true;
-  if (!handler) return true; // HACK no UI mounted → don't block tool execution for testing cases
+  if (!handler) return false;
   return handler({ ...req, id: Date.now() });
 } //FIXME Request human approval for shell actions

@@ -125,44 +125,6 @@ function looksLikeCliCommand(first: string, rest: string[]): boolean {
   return (rest[0] ?? "").startsWith("-");
 } //FIXME: queen search --query should not conflict with queen "search for my last todo"
 
-const SEARCH_VERBS = /^(?:search|look\s*up)\b/;
-
-const QUESTION_WORDS = new Set([
-  "what", "whats", "where", "whens", "when", "who", "whos", "whom", "whose",
-  "why", "how", "hows", "which",
-]);
-
-const KIND_NOUNS: Partial<Record<DocumentKind, string>> = {
-  conversation: "conversation",
-  todo: "todo",
-  fact: "fact",
-  insight: "insight",
-  journal: "journal",
-  daily: "daily summary",
-  location: "location",
-};
-
-function normalize(text: string): string {
-  return text.toLowerCase().replace(/[\u2019']/g, "");
-}
-
-function isSearchLike(text: string): boolean {
-  const first = (text.split(/\s+/)[0] ?? "").replace(/[^a-z0-9]/g, "");
-  return SEARCH_VERBS.test(text) || QUESTION_WORDS.has(first);
-}
-
-function searchQuery(raw: string): string {
-  const stripped = raw
-    .replace(/^(?:search|look\s*up)(?:\s+(?:for|about))?\s+/i, "")
-    .replace(/[?.!]+$/, "")
-    .trim();
-  return stripped.length > 0 ? stripped : raw.trim();
-}
-
-function ir(raw: string): CliDecision {
-  return { kind: "ir", query: searchQuery(raw) };
-}
-
 const SEARCH_VALUE_FLAGS = new Set([
   "--query", "--limit", "--since", "--until", "--filter", "--scope", "--sort", "--sortBy", "--cursor",
 ]);
@@ -191,16 +153,6 @@ function normalizeSearchArgs(args: readonly string[]): string[] {
   return query.length > 0 ? ["--query", query, ...out] : out;
 }
 
-function latestKind(text: string): DocumentKind | undefined {
-  if (/\b\d+\b/.test(text)) return undefined;
-  for (const [kind, noun] of Object.entries(KIND_NOUNS) as [DocumentKind, string][]) {
-    if (new RegExp(`\\b(?:last|latest|newest|most recent)\\s+${noun}\\b`).test(text)) {
-      return kind;
-    }
-  }
-  return undefined;
-}
-
 export function decide(prompt: string, argv?: readonly string[]): CliDecision {
   const raw = prompt.trim();
   if (raw.length === 0) return { kind: "chat", prompt: raw };
@@ -221,11 +173,6 @@ export function decide(prompt: string, argv?: readonly string[]): CliDecision {
   if (looksLikeCliCommand(first, rest)) {
     return { kind: "subcommand", name: resolveResourceName(first), argv: rest };
   }
-
-  const text = normalize(raw);
-  const kind = latestKind(text);
-  if (kind !== undefined) return { kind: "latest", kinds: [kind] };
-  if (isSearchLike(text)) return ir(raw);
 
   return { kind: "agent", prompt: raw };
 }

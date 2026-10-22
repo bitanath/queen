@@ -1,4 +1,5 @@
 import "./src/utils/preload-env-variables";
+import { tailClip } from "./src/utils/stream-status";
 
 if (process.env.QUEEN_ROLE === "bee-mcp") {
   const [{ serveMcp }, { createCommandContext }] = await Promise.all([
@@ -65,6 +66,12 @@ if (process.env.QUEEN_ROLE === "bee-mcp") {
                   await renderSpec(spec);
                   spinner?.start();
                 },
+                ...(spinner
+                  ? {
+                      onThinking: (text: string) => spinner.setThinking(text),
+                      onStatus: (status) => spinner.setStatus(status),
+                    }
+                  : {}),
               }),
         });
       } finally {
@@ -80,17 +87,32 @@ if (process.env.QUEEN_ROLE === "bee-mcp") {
   }
 }
 
-function createSpinner(): { start: () => void; stop: () => void } | null {
+function createSpinner(): {
+  start: () => void;
+  stop: () => void;
+  setThinking: (text: string) => void;
+  setStatus: (status: { phase: string; agent?: string; family?: string; detail?: string }) => void;
+} | null {
   if (!process.stderr.isTTY) return null;
   const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   let timer: ReturnType<typeof setInterval> | undefined;
   let started = 0;
   let frame = 0;
+  let thinking = "";
+  let status = "";
   const draw = () => {
     const seconds = Math.floor((Date.now() - started) / 1000);
     const icon = frames[frame % frames.length] ?? frames[0];
     frame += 1;
-    process.stderr.write(`\r\x1b[2K\x1b[2m${icon} queen · ${seconds}s\x1b[0m`);
+    const rawColumns = (process.stderr as { columns?: number }).columns;
+    const columns = rawColumns !== undefined && rawColumns > 0 ? rawColumns : 80;
+    const label = status.length > 0 ? status : "Thinking";
+    const prefix = `${icon} queen · ${seconds}s · ${label} · `;
+    const budget = Math.max(0, columns - prefix.length - 1);
+    const clean = thinking.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+    const thought = budget > 1 ? tailClip(clean, budget) : "";
+    const suffix = thought.length > 0 ? `\x1b[90m · ${thought}\x1b[0m` : "";
+    process.stderr.write(`\r\x1b[2K\x1b[2m${icon} queen · ${seconds}s · ${label}\x1b[0m${suffix}`);
   };
   const stop = () => {
     if (timer === undefined) return;
@@ -100,11 +122,24 @@ function createSpinner(): { start: () => void; stop: () => void } | null {
   };
   const start = () => {
     stop();
+    thinking = "";
     started = Date.now();
     draw();
     timer = setInterval(draw, 100);
   };
-  return { start, stop };
+  const setThinking = (text: string) => {
+    thinking = text;
+  };
+  const setStatus = (next: { phase: string; agent?: string; family?: string; detail?: string }) => {
+    if (next.phase === "ask") status = "Ask";
+    else if (next.phase === "orchestrator") status = "Orchestrator";
+    else if (next.phase === "select") status = `${next.agent ?? "agent"} · ${next.family ?? "tools"}`;
+    else if (next.phase === "agent") status = next.family ? `${next.agent ?? "agent"} · ${next.family}` : next.agent ?? "agent";
+    else if (next.phase === "approval") status = `approval · ${next.detail ?? "tool"}`;
+    else status = "";
+    thinking = "";
+  };
+  return { start, stop, setThinking, setStatus };
 }
 
 function writeJson(value: unknown): Promise<void> {
