@@ -1,6 +1,6 @@
-import { Agent, AfterToolCallEvent, BeforeInvocationEvent, BeforeToolCallEvent, ModelStreamUpdateEvent, SlidingWindowConversationManager, tool, type JSONSchema, type Tool, } from "@strands-agents/sdk";
+import { Agent, AfterToolCallEvent, BeforeInvocationEvent, BeforeToolCallEvent, ModelStreamUpdateEvent, SlidingWindowConversationManager, tool, type JSONSchema, type Tool } from "@strands-agents/sdk";
 
-import { beeMeTool, httpRequest, toolRisk, webFetch } from "./tool-definitions";
+import { beeMeTool, toolRisk } from "./tool-definitions";
 import { orchestratorPrompt, SUB_AGENTS, type AgentSpec } from "./agents";
 import { TokenBudgetConversationManager } from "./conversation-manager";
 import { planRoute, type RoutePlan } from "./agents/orchestrator";
@@ -12,7 +12,6 @@ import { isLoggedIn } from "../utils/bee-com-bridge";
 import type { DocumentKind } from "../documents";
 import { ElthurModel } from "./strands-model";
 import type { UiBridge } from "./ui-bridge";
-import { webSearch } from "./web-find";
 
 export type AgentActivity =
   | { kind: "delta"; agent: string; text: string }
@@ -31,9 +30,6 @@ function textDeltaOf(event: unknown): string | null {
 function localToolMap(): Map<string, Tool> {
   const map = new Map<string, Tool>();
   map.set("bee_me", beeMeTool);
-  map.set("web_fetch", webFetch);
-  map.set("http_request", httpRequest);
-  map.set("web_search", webSearch);
   for (const automation of automationTools()) map.set(automation.name, automation);
   return map;
 }
@@ -125,7 +121,7 @@ function installToolGates(agent: Agent, bridge?: UiBridge): void {
   });
 }
 
-const WORKER_NAMES = new Set(["bee", "mac", "net"]);
+const WORKER_NAMES = new Set(["bee", "mac", "linux"]);
 
 const WORKER_TOOL_CAP = 4; //FIXME: small model tool caps to prevent overloading
 const ORCHESTRATOR_TOOL_CAP = 3;
@@ -133,7 +129,7 @@ const ORCHESTRATOR_TOOL_CAP = 3;
 /**
  * FIXME: Claude suggested
  * The orchestrator may consult each worker at most once per invocation. Small
- * local models otherwise loop (call net five times in a row); cancelling a
+ * local models otherwise loop (call a worker five times in a row); cancelling a
  * repeat forces them to answer with what they already have.
  */
 function installSinglePassGuard(agent: Agent): void {
@@ -259,7 +255,7 @@ function buildWorkers(
 
 export type RoutedQueen = {
   plan: (prompt: string, docKind?: string | null) => RoutePlan;
-  worker: (name: "bee" | "mac" | "net") => Agent | undefined;
+  worker: (name: "bee" | "mac" | "linux") => Agent | undefined;
   chat: () => Agent;
 };
 

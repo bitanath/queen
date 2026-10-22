@@ -9,11 +9,18 @@ export type AgentSpec = {
 export { orchestratorPrompt } from "./orchestrator";
 export { beeAgent } from "./bee";
 export { macAgent } from "./mac";
-export { netAgent } from "./net";
+export { linuxAgent } from "./linux";
 
+import { hostAgentName } from "../automation";
 import { beeAgent } from "./bee";
+import { linuxAgent } from "./linux";
 import { macAgent } from "./mac";
-import { netAgent } from "./net";
 
-/** The workers the orchestrator may call. */
-export const SUB_AGENTS: AgentSpec[] = [beeAgent, macAgent, netAgent];
+/** All agent roles. Only the host matching this OS is routed to. */
+export const AGENTS: AgentSpec[] = [beeAgent, macAgent, linuxAgent];
+
+/** The workers the orchestrator may call on this machine. */
+export const SUB_AGENTS: AgentSpec[] = [
+  beeAgent,
+  ...(hostAgentName() === "mac" ? [macAgent] : hostAgentName() === "linux" ? [linuxAgent] : []),
+];

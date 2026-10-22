@@ -5,6 +5,7 @@ import { TOPIC_LEXICONS } from "../functions/analytics/lexicons";
 import { countIn, tokens } from "../functions/analytics/text";
 import type { TopicKey } from "../functions/analytics/types";
 import { beeContext } from "../utils/bee-com-bridge";
+import { labelsAreInferred, speakerLabels } from "../utils/diarize-speaker";
 
 export type DocumentKind = "conversation" | "daily" | "journal" | "fact" | "todo" | "insight" | "location";
 
@@ -176,7 +177,14 @@ export type TranscriptLine = {
   at?: number;
   end?: number;
   time?: string;
+  inferred?: boolean;
 };
+
+function toMs(value: unknown): number | undefined {
+  const parsed = num(value);
+  if (parsed === undefined) return undefined;
+  return parsed > 1e12 ? parsed : parsed * 1000;
+}
 
 function transcriptLines(record: Rec, tz: string): TranscriptLine[] {
   const lines: TranscriptLine[] = [];
@@ -189,16 +197,33 @@ function transcriptLines(record: Rec, tz: string): TranscriptLine[] {
       const u = asRecord(raw);
       const body = text(u["text"]);
       if (!body) continue;
-      const speaker = text(u["speaker"]) || "Speaker";
-      const at = num(u["spoken_at"]) ?? num(u["start"]);
+      const inferredSpeaker = text(u["inferred_speaker"]);
+      const speaker = inferredSpeaker || text(u["speaker"]) || "Speaker";
+      const spokenAt = toMs(u["spoken_at"]);
+      const start = toMs(u["start"]);
+      const end = toMs(u["end"]);
+      const at = spokenAt ?? start;
+      const lineEnd =
+        spokenAt !== undefined && start !== undefined && end !== undefined && end >= start
+          ? spokenAt + (end - start)
+          : end ?? at;
       lines.push({
         speaker,
         text: body,
-        ...(at !== undefined ? { at, end: at, time: clockLabel(at, tz) } : {}),
+        ...(at !== undefined
+          ? { at, ...(lineEnd !== undefined ? { end: lineEnd } : {}), time: clockLabel(at, tz) }
+          : {}),
+        ...(inferredSpeaker ? { inferred: true } : {}),
       });
     }
   }
-  return lines;
+
+  // The API can interleave utterances from multiple capture sessions; label and
+  // display them in chronological order.
+  return lines
+    .map((line, index) => ({ line, index }))
+    .sort((a, b) => (a.line.at ?? 0) - (b.line.at ?? 0) || a.index - b.index)
+    .map((entry) => entry.line);
 }
 
 function conversationMarkdown(summary: Rec, detail: Rec, tz: string): DocFields {
@@ -208,7 +233,14 @@ function conversationMarkdown(summary: Rec, detail: Rec, tz: string): DocFields 
   const long = text(detail["summary"]) || text(summary["summary"]);
   const device = text(detail["device_type"]) || text(summary["device_type"]);
   const state = text(detail["state"]) || text(summary["state"]);
-  const transcript = transcriptLines(detail, tz);
+  const rawTranscript = transcriptLines(detail, tz);
+  const labels = speakerLabels(rawTranscript);
+  const inferred = labelsAreInferred(rawTranscript);
+  const transcript = rawTranscript.map((line, index) => ({
+    ...line,
+    speaker: labels[index] ?? line.speaker,
+    ...(inferred ? { inferred: true } : {}),
+  }));
 
   const title = `Conversation · ${whenLabel(start, tz)}`;
   const subtitle = oneLine(short || long || "Conversation capture");
@@ -227,10 +259,10 @@ function conversationMarkdown(summary: Rec, detail: Rec, tz: string): DocFields 
 
   const transcriptParts: string[] = ["## Transcript", ""];
   if (transcript.length > 0) {
+    if (inferred) transcriptParts.push("_inferred speakers · heuristic, may be inaccurate_", "");
     for (const line of transcript) {
       const stamp = line.at !== undefined ? `${clockLabel(line.at, tz)} · ` : "";
-      transcriptParts.push(`**${line.speaker}** ${stamp}`);
-      transcriptParts.push(line.text, "");
+      transcriptParts.push(`**${line.speaker}** ${stamp}${line.text}`, "");
     }
   } else {
     transcriptParts.push("_No transcript captured._");
@@ -525,6 +557,22 @@ export function placeholderDocument(title: string, markdown: string): QueenDocum
   };
 }
 
+export function conversationDocument(id: number | string, payload: unknown): QueenDocument {
+  const root = asRecord(payload);
+  const nested = root["conversation"];
+  const detail =
+    nested && typeof nested === "object" && !Array.isArray(nested)
+      ? (nested as Rec)
+      : unwrap(payload);
+  const tz = timeZoneOf(root);
+  return {
+    key: `conversation:${String(id)}`,
+    kind: "conversation",
+    id: String(id),
+    ...conversationMarkdown({}, detail, tz),
+  };
+}
+
 export async function fetchConversation(id: number | string): Promise<QueenDocument> {
   const ctx = await beeContext("prod");
   const numeric = Number(id);
@@ -532,14 +580,7 @@ export async function fetchConversation(id: number | string): Promise<QueenDocum
     id: Number.isFinite(numeric) ? numeric : id,
     includeTranscript: true,
   });
-  const detail = unwrap(fetched);
-  const tz = timeZoneOf(detail);
-  return {
-    key: `conversation:${String(id)}`,
-    kind: "conversation",
-    id: String(id),
-    ...conversationMarkdown({}, detail, tz),
-  };
+  return conversationDocument(id, fetched);
 }
 
 export async function fetchDocument(kind: DocumentKind, id: string | number): Promise<QueenDocument> {

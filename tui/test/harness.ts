@@ -190,6 +190,10 @@ function describeDecision(decision: CliDecision): string {
       return `clarify:${decision.suggestions.join(" | ")}`;
     case "chat":
       return "chat";
+    case "agent":
+      return "agent";
+    case "uri":
+      return "uri";
     case "help":
       return "help";
     default:
@@ -491,7 +495,6 @@ const E2E_IDS = [
   "catalog:todos:list",
   "catalog:facts:list",
   "catalog:insights:list",
-  "net:web_search",
   "auto:os_clipboard_get",
   "auto:os_system_status",
   "neg:greeting",
@@ -569,15 +572,15 @@ async function tierE(): Promise<void> {
   const cases: { id: string; prompt: string; title: string }[] = [
     { id: "cli:status", prompt: "status", title: "status" },
     { id: "cli:todos-list", prompt: "todos list", title: "todos" },
-    { id: "cli:latest-todo", prompt: "show latest todo", title: "latest todo" },
-    { id: "cli:facts", prompt: "list my facts", title: "Facts" },
+    { id: "cli:latest-todo", prompt: "show latest todo", title: "queen" },
+    { id: "cli:facts", prompt: "list my facts", title: "queen" },
     { id: "cli:search", prompt: "what did I say about the budget", title: "search" },
     { id: "cli:help", prompt: "help", title: "queen" },
   ];
   for (const c of cases) {
     const started = Date.now();
     const { spec, ok } = await runCli(c.prompt);
-    const titleOk = c.id === "cli:latest-todo" ? spec.title.length > 0 : spec.title === c.title;
+    const titleOk = spec.title === c.title;
     record({
       tier: "E",
       case: c.id,

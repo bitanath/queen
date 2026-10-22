@@ -1,9 +1,8 @@
 import { RESOURCES } from "@/resources";
 
 import type { DocumentKind } from "../../documents";
-import { classifyRequest } from "../agents/orchestrator";
 
-export type CliWorker = "bee" | "mac" | "net";
+export type CliWorker = "bee" | "mac" | "linux";
 export type SearchFilter = "all" | "conversations" | "daily" | "facts";
 
 export type CliDecision =
@@ -15,6 +14,8 @@ export type CliDecision =
   | { kind: "ir"; query: string; filter?: SearchFilter }
   | { kind: "action"; worker: CliWorker; prompt: string }
   | { kind: "chat"; prompt: string }
+  | { kind: "agent"; prompt: string }
+  | { kind: "uri"; uri: string }
   | { kind: "clarify"; prompt: string; suggestions: string[] };
 
 export type CliMenuEntry = {
@@ -84,15 +85,23 @@ export function cliMenu(): CliMenuEntry[] {
   return entries;
 }
 
-const RESOURCE_INFO = new Map<string, { canonical: string; hasSubcommands: boolean }>();
+const RESOURCE_INFO = new Map<
+  string,
+  { canonical: string; hasSubcommands: boolean; subcommands: Set<string> }
+>();
 for (const resource of RESOURCES) {
   const cliActions = resource.actions.filter((action) => action.cli !== undefined);
   if (cliActions.length === 0) continue;
   const name = resource.cliCommand.name;
   const hasSubcommands = cliActions.some((action) => action.cli?.subcommand !== undefined);
-  RESOURCE_INFO.set(name, { canonical: name, hasSubcommands });
+  const subcommands = new Set(
+    cliActions
+      .map((action) => action.cli?.subcommand)
+      .filter((subcommand): subcommand is string => subcommand !== undefined),
+  );
+  RESOURCE_INFO.set(name, { canonical: name, hasSubcommands, subcommands });
   for (const alias of resource.cliCommand.aliases ?? []) {
-    RESOURCE_INFO.set(alias, { canonical: name, hasSubcommands });
+    RESOURCE_INFO.set(alias, { canonical: name, hasSubcommands, subcommands });
   }
 }
 
@@ -107,179 +116,98 @@ export function resolveResourceName(name: string): string {
 function looksLikeCliCommand(first: string, rest: string[]): boolean {
   const info = RESOURCE_INFO.get(first);
   if (!info) return false;
-  if (info.hasSubcommands) return true;
+  if (info.hasSubcommands) {
+    if (rest.length === 0) return true;
+    const sub = rest[0] ?? "";
+    return info.subcommands.has(sub) || sub.startsWith("-");
+  }
   if (rest.length === 0) return true;
   return (rest[0] ?? "").startsWith("-");
 } //FIXME: queen search --query should not conflict with queen "search for my last todo"
 
-const LIST_ACTION: Record<DocumentKind, string> = {
-  todo: "todos list",
-  fact: "facts list",
-  insight: "insights list",
-  journal: "journals list",
-  daily: "daily list",
-  conversation: "conversations list",
-  location: "locations recent",
+const SEARCH_VERBS = /^(?:search|look\s*up)\b/;
+
+const QUESTION_WORDS = new Set([
+  "what", "whats", "where", "whens", "when", "who", "whos", "whom", "whose",
+  "why", "how", "hows", "which",
+]);
+
+const KIND_NOUNS: Partial<Record<DocumentKind, string>> = {
+  conversation: "conversation",
+  todo: "todo",
+  fact: "fact",
+  insight: "insight",
+  journal: "journal",
+  daily: "daily summary",
+  location: "location",
 };
-
-const KIND_PATTERNS: readonly [RegExp, DocumentKind][] = [
-  [/\btodos?\b|\btasks?\b/, "todo"],
-  [/\bfacts?\b/, "fact"],
-  [/\binsights?\b/, "insight"],
-  [/\bjournals?\b|\bvoice ?notes?\b/, "journal"],
-  [/\bdaily\b|\bsumm(?:ary|aries)\b/, "daily"],
-  [/\bconversations?\b|\btranscripts?\b|\butterances?\b/, "conversation"],
-  [/\blocations?\b|\bvisits?\b/, "location"],
-];
-
-const LATEST = /\b(latest|newest|most recent|last)\b/;
-const LIST = /\b(list|show|display|recent|all)\b/;
-const WRITE =
-  /\b(add|create|make|new|save|set|put|log|track|remember|remind|schedule|draft|send|text|message|email|update|edit|delete|remove|mark|complete|finish|open|play|pause|toggle|turn|launch)\b/;
-
-const MAC = [
-  /\bremind(er|ers|ing)?\b/,
-  /\bcalendar\b/,
-  /\bmeeting\b/,
-  /\bappointment\b/,
-  /\bcontacts?\b/,
-  /\bemails?\b/,
-  /\bmail\b/,
-  /\bimessages?\b/,
-  /\bsms\b/,
-  /\btexts?\b/,
-  /\bdirections?\b/,
-  /\bnavigate\b/,
-  /\bmaps?\b/,
-  /\bmusic\b/,
-  /\bsong\b/,
-  /\bclipboard\b/,
-  /\bpaste\b/,
-  /\bnotif(y|ication|ications)\b/,
-  /\bfinder\b/,
-  /\breveal\b/,
-  /\bshortcut\b/,
-  /\bdark mode\b/,
-  /\bbattery\b/,
-  /\bscreenshot\b/,
-  /\bvolume\b/,
-  /\bbrightness\b/,
-  /\bsiri\b/,
-  /\bopen\b/,
-  /\blaunch\b/,
-];
-
-const NET = [
-  /\bweather\b/,
-  /\bforecast\b/,
-  /\bsearch (the )?web\b/,
-  /\bweb search\b/,
-  /\bgoogle\b/,
-  /\bonline\b/,
-  /\bwikipedia\b/,
-  /\bnews\b/,
-  /\bcapital of\b/,
-  /\bhttps?:\/\//,
-  /\bapi\b/,
-  /\bfetch\b/,
-  /\btranslate\b/,
-  /\bstock price\b/,
-  /\bexchange rate\b/,
-  /\binternet\b/,
-];
-
-const BEE_WRITE = [
-  /\btodos?\b/,
-  /\btasks?\b/,
-  /\bfacts?\b/,
-  /\binsights?\b/,
-  /\bjournals?\b/,
-  /\bvoice ?notes?\b/,
-];
 
 function normalize(text: string): string {
   return text.toLowerCase().replace(/[\u2019']/g, "");
 }
 
-function any(text: string, patterns: readonly RegExp[]): boolean {
-  return patterns.some((pattern) => pattern.test(text));
-}
-
-function kindOf(text: string): DocumentKind | undefined {
-  for (const [pattern, kind] of KIND_PATTERNS) {
-    if (pattern.test(text)) return kind;
-  }
-  return undefined;
-}
-
-function isQuestion(text: string): boolean {
-  return (
-    /^(what|whats|where|whens|who|whom|whose|why|hows|how|which|when|is|are|am|was|were|do|does|did|can|could|should|would|will|may|might|have|has|had)\b/.test(
-      text,
-    ) || text.endsWith("?")
-  );
-}
-
-function externalAlias(text: string): string | undefined {
-  if (/\b(my name|profile)\b/.test(text)) return "me";
-  if (/\bbrief\b/.test(text)) return "today";
-  if (/\b(reachable|ping|connectivity)\b/.test(text)) return "ping";
-  if (/\b(am i logged in|login status|connection status)\b/.test(text)) return "status";
-  if (/\bversion\b/.test(text)) return "version";
-  if (/\b(recently changed|what changed|has changed)\b/.test(text)) return "changed";
-  if (/\bjust now\b/.test(text)) return "now";
-  return undefined;
-}
-
-function searchFilter(text: string): SearchFilter | undefined {
-  if (/\bfacts?\b/.test(text)) return "facts";
-  if (/\bdaily\b|\bsumm(?:ary|aries)\b/.test(text)) return "daily";
-  if (/\bconversations?\b|\btranscripts?\b/.test(text)) return "conversations";
-  return undefined;
+function isSearchLike(text: string): boolean {
+  const first = (text.split(/\s+/)[0] ?? "").replace(/[^a-z0-9]/g, "");
+  return SEARCH_VERBS.test(text) || QUESTION_WORDS.has(first);
 }
 
 function searchQuery(raw: string): string {
   const stripped = raw
-    .replace(
-      /^(search( my (facts|conversations|daily summaries))?( for)?|find|show me|tell me|what did i (say|hear|talk|do) about|what did i (say|hear|talk|do))\s+/i,
-      "",
-    )
+    .replace(/^(?:search|look\s*up)(?:\s+(?:for|about))?\s+/i, "")
     .replace(/[?.!]+$/, "")
     .trim();
   return stripped.length > 0 ? stripped : raw.trim();
 }
 
-function ir(raw: string, text: string): CliDecision {
-  const filter = searchFilter(text);
-  return {
-    kind: "ir",
-    query: searchQuery(raw),
-    ...(filter !== undefined ? { filter } : {}),
-  };
+function ir(raw: string): CliDecision {
+  return { kind: "ir", query: searchQuery(raw) };
 }
 
-function suggestionCommands(prompt: string, text: string): string[] {
-  const suggestions: string[] = [];
-  if (/\btodos?\b|\btasks?\b/.test(text)) {
-    suggestions.push('queen todos create --text "<what to do>"');
+const SEARCH_VALUE_FLAGS = new Set([
+  "--query", "--limit", "--since", "--until", "--filter", "--scope", "--sort", "--sortBy", "--cursor",
+]);
+
+function normalizeSearchArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  const positionals: string[] = [];
+  let hasQuery = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (arg.startsWith("--")) {
+      out.push(arg);
+      if (arg === "--query") hasQuery = true;
+      const next = args[index + 1];
+      if (SEARCH_VALUE_FLAGS.has(arg) && next !== undefined && !next.startsWith("--")) {
+        out.push(next);
+        index += 1;
+      }
+      continue;
+    }
+    positionals.push(arg);
   }
-  if (/\bfacts?\b/.test(text)) {
-    suggestions.push('queen facts create --text "<fact>"');
-  }
-  suggestions.push(`queen "${prompt} on my Mac"`);
-  if (suggestions.length < 2) {
-    suggestions.push(`queen "${prompt} in Bee"`);
-  }
-  return [...new Set(suggestions)];
+  if (hasQuery) return out;
+  const query = positionals.join(" ").trim();
+  return query.length > 0 ? ["--query", query, ...out] : out;
 }
 
-function clarify(prompt: string, text: string): CliDecision {
-  return { kind: "clarify", prompt, suggestions: suggestionCommands(prompt, text) };
+function latestKind(text: string): DocumentKind | undefined {
+  if (/\b\d+\b/.test(text)) return undefined;
+  for (const [kind, noun] of Object.entries(KIND_NOUNS) as [DocumentKind, string][]) {
+    if (new RegExp(`\\b(?:last|latest|newest|most recent)\\s+${noun}\\b`).test(text)) {
+      return kind;
+    }
+  }
+  return undefined;
 }
 
-export function decide(prompt: string): CliDecision {
+export function decide(prompt: string, argv?: readonly string[]): CliDecision {
   const raw = prompt.trim();
   if (raw.length === 0) return { kind: "chat", prompt: raw };
+  if (/^bee:\/\//i.test(raw)) return { kind: "uri", uri: raw };
+  if (argv?.[0] === "search" && argv.length > 1) {
+    return { kind: "subcommand", name: "search", argv: normalizeSearchArgs(argv.slice(1)) };
+  }
 
   const tokens = raw.split(/\s+/);
   const first = (tokens[0] ?? "").toLowerCase().replace(/^[^a-z0-9-]+|[^a-z0-9-]+$/g, "");
@@ -295,46 +223,9 @@ export function decide(prompt: string): CliDecision {
   }
 
   const text = normalize(raw);
-  const cls = classifyRequest(raw);
+  const kind = latestKind(text);
+  if (kind !== undefined) return { kind: "latest", kinds: [kind] };
+  if (isSearchLike(text)) return ir(raw);
 
-  const alias = externalAlias(text);
-  if (alias !== undefined) return { kind: "external", name: alias, argv: [] };
-
-  if (/\bwhere am i\b/.test(text)) return { kind: "catalog", id: "locations current" };
-  if (/\bwhere have i been\b|\bspending time\b/.test(text)) {
-    return { kind: "catalog", id: "locations clusters" };
-  }
-
-  const kind = kindOf(text);
-  const write = WRITE.test(text);
-
-  if (kind !== undefined) {
-    if (LATEST.test(text) && !write) return { kind: "latest", kinds: [kind] };
-    if (LIST.test(text) && !write) return { kind: "catalog", id: LIST_ACTION[kind] };
-  }
-
-  if (write) {
-    // "note" is genuinely ambiguous: a Bee journal or an Apple Note.
-    if (/\bnotes?\b/.test(text)) return clarify(raw, text);
-    if (any(text, MAC)) return { kind: "action", worker: "mac", prompt: raw };
-    if (any(text, BEE_WRITE)) return { kind: "action", worker: "bee", prompt: raw };
-    if (cls === "mac" || cls === "net" || cls === "bee") {
-      return { kind: "action", worker: cls, prompt: raw };
-    }
-    return clarify(raw, text);
-  }
-
-  if (isQuestion(text)) {
-    const recollect = /\b(mention|mentioned|say|said|talk|talked|hear|heard|discuss|discussed)\b/.test(text);
-    if (cls === "mac") return { kind: "action", worker: "mac", prompt: raw };
-    if (cls === "net") return { kind: "action", worker: "net", prompt: raw };
-    if (cls === "bee" || recollect) return ir(raw, text);
-    return { kind: "chat", prompt: raw };
-  }
-
-  if (cls === "mac") return { kind: "action", worker: "mac", prompt: raw };
-  if (cls === "net") return { kind: "action", worker: "net", prompt: raw };
-  if (cls === "bee") return ir(raw, text);
-  if (cls === "ambiguous") return clarify(raw, text);
-  return { kind: "chat", prompt: raw };
+  return { kind: "agent", prompt: raw };
 }

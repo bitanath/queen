@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$DIR/.." && pwd)"
+ROOT="$DIR"
 
 "$DIR/build.sh" -m lfm2.5 -p 2.6b -q q5_k_m --name queen
 

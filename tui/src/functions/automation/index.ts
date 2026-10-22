@@ -6,6 +6,12 @@ import type { AutomationDef } from "./types";
 
 export type { AutomationDef } from "./types";
 
+export function hostAgentName(): "mac" | "linux" | null {
+  if (process.platform === "darwin") return "mac";
+  if (process.platform === "linux") return "linux";
+  return null;
+}
+
 export function automationDefs(): AutomationDef[] {
   if (process.platform === "darwin") return MACOS_AUTOMATIONS;
   if (process.platform === "linux") return LINUX_AUTOMATIONS;

@@ -23,7 +23,7 @@ import { createChatSession, type ChatToolInfo, type ChatSession } from "./functi
 import type { DocFilter, UiBridge } from "./functions/ui-bridge";
 import { LoginCard } from "./interface/login-card";
 import { useToast } from "./interface/toaster";
-import { heuristicSpeakers } from "./utils/diarize";
+import { labelsAreInferred, speakerLabels } from "./utils/diarize-speaker";
 import { lastThink, stripThinking } from "./utils/stream-status";
 import { useTheme } from "./theme/use-theme";
 import { useUi } from "./userinterface";
@@ -150,7 +150,11 @@ export function Screen({
     [theme],
   );
 
-  const transcriptLabels = useMemo(() => (doc ? heuristicSpeakers(doc.transcriptLines) : []), [doc]);
+  const transcriptLabels = useMemo(() => (doc ? speakerLabels(doc.transcriptLines) : []), [doc]);
+  const transcriptInferred = useMemo(
+    () => (doc ? labelsAreInferred(doc.transcriptLines) : false),
+    [doc],
+  );
   const speakerNames = useMemo(() => Array.from(new Set(transcriptLabels)), [transcriptLabels]);
   const speakerColor = (name: string) => {
     const keys = ["success", "warning", "info"] as const;
@@ -431,7 +435,11 @@ export function Screen({
                 <text fg={theme.colors.primary}>
                   <b>Transcript</b>
                 </text>
-                <text fg={theme.colors.mutedForeground}>inferred speakers · heuristic, may be inaccurate</text>
+                {transcriptInferred && (
+                  <text fg={theme.colors.mutedForeground}>
+                    inferred speakers · heuristic, may be inaccurate
+                  </text>
+                )}
                 <box flexDirection="column" marginTop={1}>
                   {doc.transcriptLines.map((line, index) => {
                     const name = transcriptLabels[index] ?? line.speaker;

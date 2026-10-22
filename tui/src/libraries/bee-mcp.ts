@@ -11,6 +11,8 @@ import {
 } from "@strands-agents/sdk";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+import { withSearchDefaults } from "../documents/config";
+
 const TOOL_TIMEOUT_MS = 30_000;
 const DESC_CAP = 100;
 
@@ -178,8 +180,14 @@ class TimedMcpTool extends Tool {
     timeout.addEventListener("abort", () => {
       timedOut = true;
     }, { once: true });
+    const input =
+      this.name === "bee_search" ? withSearchDefaults(context.toolUse.input) : context.toolUse.input;
+    const toolContext =
+      input === context.toolUse.input
+        ? context
+        : { ...context, toolUse: { ...context.toolUse, input: input as JSONValue } };
     const generator = this.inner.stream({
-      ...context,
+      ...toolContext,
       cancelSignal: anySignal([context.cancelSignal, timeout]),
     });
     let step = await generator.next();

@@ -9,7 +9,7 @@ import { TextAttributes } from "@opentui/core";
 import { useTheme } from "../theme/use-theme";
 import { KeyValue } from "./key-value";
 import { Divider } from "./divider";
-import { heuristicSpeakers } from "../utils/diarize";
+import { labelsAreInferred, speakerLabels } from "../utils/diarize-speaker";
 import type { AnswerDetail } from "../utils/answer-view";
 
 const SPEAKER_KEYS = ["success", "warning", "info"] as const;
@@ -62,7 +62,8 @@ export function DetailView({
 }) {
   const theme = useTheme();
   const transcript = detail.transcript ?? [];
-  const labels = useMemo(() => heuristicSpeakers(transcript), [detail]);
+  const labels = useMemo(() => speakerLabels(transcript), [detail]);
+  const inferred = useMemo(() => labelsAreInferred(transcript), [detail]);
   const speakers = Array.from(new Set(labels));
   const colorFor = (speaker: string) => {
     const index = speakers.indexOf(speaker);
@@ -107,7 +108,11 @@ export function DetailView({
           <box marginTop={1} marginBottom={1}>
             <Divider label="transcript" />
           </box>
-          <text fg={theme.colors.mutedForeground}>approximately inferred using heuristics · might not be correct speaker identification</text>
+          {inferred && (
+            <text fg={theme.colors.mutedForeground}>
+              approximately inferred using heuristics · might not be correct speaker identification
+            </text>
+          )}
           <box flexDirection="column" marginTop={1}>
             {transcript.map((line, index) => {
               const name = labels[index] ?? line.speaker;

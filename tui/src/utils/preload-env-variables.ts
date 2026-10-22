@@ -11,7 +11,7 @@ if (process.env.QUEEN_ELTHUR_SHA == null && process.env.ELTHUR_MODEL == null) {
 
   if (!existsSync(modelPath)) {
     console.error(
-      `queen: no dev model at ${modelPath}; fetch one with ./scripts/build.sh --list or set ELTHUR_MODEL`,
+      `queen: no dev model at ${modelPath}; fetch one with ./build.sh --list or set ELTHUR_MODEL`,
     );
   }
 

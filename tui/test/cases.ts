@@ -1,6 +1,6 @@
-import { automationDefs } from "../src/functions/automation";
+import { automationDefs, hostAgentName } from "../src/functions/automation";
 
-export type RouteAgent = "bee" | "mac" | "net" | "none" | "clarify";
+export type RouteAgent = "bee" | "mac" | "linux" | "none" | "clarify";
 
 export type CaseClass = "recall" | "precision" | "ambiguous";
 
@@ -75,11 +75,6 @@ const AUTOMATION_INTENTS: Record<string, string> = {
   os_system_status: "how's my battery",
 };
 
-const NET_CASES: RouteCase[] = [
-  { id: "net:web_search", prompt: "search the web for the capital of australia", agent: "net", tool: "web_search" },
-  { id: "net:web_fetch", prompt: "fetch example.com and summarise it", agent: "net" },
-];
-
 const NEGATIVE_CASES: RouteCase[] = [
   { id: "neg:greeting", prompt: "hey there", agent: "none" },
   { id: "neg:math", prompt: "what is 2 plus 2", agent: "none" },
@@ -93,10 +88,11 @@ const NEGATIVE_CASES: RouteCase[] = [
 
 function automationCases(): RouteCase[] {
   const OVERRIDE: Record<string, RouteAgent> = { os_create_note: "clarify" };
+  const host = hostAgentName() ?? "mac";
   return automationDefs().map((def) => ({
     id: `auto:${def.name}`,
     prompt: AUTOMATION_INTENTS[def.name] ?? `use the ${def.name} action`,
-    agent: OVERRIDE[def.name] ?? ("mac" as const),
+    agent: OVERRIDE[def.name] ?? host,
     tool: OVERRIDE[def.name] ? undefined : def.name,
   }));
 }
@@ -105,7 +101,6 @@ export const ROUTE_CASES: RouteCase[] = [
   ...CATALOG_CASES,
   ...EXTERNAL_CASES,
   ...automationCases(),
-  ...NET_CASES,
   ...NEGATIVE_CASES,
 ];
 
@@ -113,7 +108,6 @@ export const ROUTE_CASES: RouteCase[] = [
 export const MANIFEST = {
   catalog: CATALOG_CASES,
   external: EXTERNAL_CASES,
-  net: NET_CASES,
   negatives: NEGATIVE_CASES,
   automations: automationCases(),
 };
@@ -173,10 +167,10 @@ export const HEURISTIC_CASES: HeuristicCase[] = [
   { text: "open safari", expected: "mac" },
   { text: "open example.com in my browser", expected: "mac" },
 
-  // --- recall: net -------------------------------------------------------
-  { text: "what's the weather in tokyo", expected: "net" },
-  { text: "search the web for the capital of australia", expected: "net" },
-  { text: "fetch example.com and summarise it", expected: "net" },
+  // --- search always means Bee search -----------------------------------
+  { text: "search the web for the capital of australia", expected: "bee" },
+  { text: "what's the weather in tokyo", expected: "none" },
+  { text: "fetch example.com and summarise it", expected: "none" },
 
   // --- precision: no tool at all ----------------------------------------
   { text: "I'm liking the weather in Paris today", expected: "none" },
@@ -229,7 +223,7 @@ export type CliDecisionCase = {
   kind: CliDecision["kind"];
   name?: string;
   catalogId?: string;
-  worker?: "bee" | "mac" | "net";
+  worker?: "bee" | "mac" | "linux";
   kinds?: string[];
   filter?: string;
   query?: string;
@@ -256,71 +250,54 @@ export const CLI_DECISION_CASES: CliDecisionCase[] = [
   { id: "ext:version", prompt: "version", kind: "external", name: "version" },
   { id: "ext:sync", prompt: "sync", kind: "external", name: "sync" },
   { id: "ext:login", prompt: "login", kind: "external", name: "login" },
-  { id: "ext:free-status", prompt: "am I logged in to bee", kind: "external", name: "status" },
-  { id: "ext:free-today", prompt: "what's my brief for today", kind: "external", name: "today" },
-  { id: "ext:free-now", prompt: "what conversations were captured just now", kind: "external", name: "now" },
-  { id: "ext:free-changed", prompt: "what has changed recently in bee", kind: "external", name: "changed" },
-  { id: "ext:free-me", prompt: "what's my name in my bee profile", kind: "external", name: "me" },
-  { id: "ext:free-ping", prompt: "is bee reachable", kind: "external", name: "ping" },
-  { id: "ext:free-version", prompt: "what version of queen is this", kind: "external", name: "version" },
+  { id: "uri:conversation", prompt: "bee://conversations/10414635", kind: "uri" },
+  { id: "uri:fact", prompt: "bee://facts/123", kind: "uri" },
+  { id: "uri:unknown", prompt: "bee://bogus/123", kind: "uri" },
+  { id: "ir:say", prompt: "what did I say about the budget", kind: "ir" },
+  { id: "ir:talk", prompt: "what did I talk about yesterday", kind: "ir" },
+  { id: "ir:facts", prompt: "search my facts for coffee", kind: "ir" },
+  { id: "ir:mention", prompt: "did I mention coffee", kind: "agent" },
+  { id: "ir:lookup", prompt: "look up voice recorder", kind: "ir" },
+  { id: "ir:free-status", prompt: "am I logged in to bee", kind: "agent" },
+  { id: "ir:free-today", prompt: "what's my brief for today", kind: "ir" },
+  { id: "ir:free-now", prompt: "what conversations were captured just now", kind: "ir" },
+  { id: "ir:free-changed", prompt: "what has changed recently in bee", kind: "ir" },
+  { id: "ir:free-me", prompt: "what's my name in my bee profile", kind: "ir" },
+  { id: "ir:free-ping", prompt: "is bee reachable", kind: "agent" },
+  { id: "ir:free-version", prompt: "what version of queen is this", kind: "ir" },
 
-  { id: "ir:say", prompt: "what did I say about the budget", kind: "ir", query: "the budget" },
-  { id: "ir:talk", prompt: "what did I talk about yesterday", kind: "ir", query: "yesterday" },
-  { id: "ir:facts", prompt: "search my facts for coffee", kind: "ir", query: "coffee", filter: "facts" },
-  { id: "ir:mention", prompt: "did I mention coffee", kind: "ir" },
-
-  { id: "list:todos", prompt: "list my todos", kind: "catalog", catalogId: "todos list" },
-  { id: "list:facts", prompt: "list my saved facts", kind: "catalog", catalogId: "facts list" },
-  { id: "list:insights", prompt: "show me my insights", kind: "catalog", catalogId: "insights list" },
-  { id: "list:journals", prompt: "list my voice notes", kind: "catalog", catalogId: "journals list" },
-  { id: "list:locations", prompt: "show my recent visits", kind: "catalog", catalogId: "locations recent" },
-  { id: "list:current-location", prompt: "where am I right now", kind: "catalog", catalogId: "locations current" },
-  {
-    id: "list:location-clusters",
-    prompt: "where have I been spending time lately",
-    kind: "catalog",
-    catalogId: "locations clusters",
-  },
+  { id: "agent:list-todos", prompt: "list my todos", kind: "agent" },
+  { id: "agent:list-facts", prompt: "list my saved facts", kind: "agent" },
+  { id: "agent:list-insights", prompt: "show me my insights", kind: "agent" },
+  { id: "agent:list-journals", prompt: "list my voice notes", kind: "agent" },
+  { id: "agent:list-locations", prompt: "show my recent visits", kind: "agent" },
+  { id: "agent:current-location", prompt: "where am I right now", kind: "ir" },
+  { id: "agent:location-clusters", prompt: "where have I been spending time lately", kind: "ir" },
 
   { id: "latest:todo", prompt: "show latest todo", kind: "latest", kinds: ["todo"] },
   { id: "latest:fact", prompt: "latest fact", kind: "latest", kinds: ["fact"] },
   { id: "latest:journal", prompt: "newest voice note", kind: "latest", kinds: ["journal"] },
+  { id: "agent:last-conversations", prompt: "show me last 10 conversations", kind: "agent" },
 
+  { id: "agent:todo-free", prompt: "make me a todo saying this is the chonkiest due by tomorrow", kind: "agent" },
+  { id: "agent:todo-add", prompt: "add a todo to buy milk", kind: "agent" },
+  { id: "agent:reminder", prompt: "remind me to call mum tomorrow at 9", kind: "agent" },
+  { id: "agent:calendar", prompt: "create a calendar event tomorrow at 3pm", kind: "agent" },
+  { id: "agent:open", prompt: "open safari", kind: "agent" },
+  { id: "agent:music", prompt: "pause the music", kind: "agent" },
+  { id: "agent:mail", prompt: "draft an email to bob about lunch", kind: "agent" },
+  { id: "agent:imessage", prompt: "text jane that I'm running late", kind: "agent" },
+  { id: "agent:search", prompt: "search the web for the capital of australia", kind: "ir" },
+  { id: "agent:weather", prompt: "what's the weather in tokyo", kind: "ir" },
 
-  {
-    id: "action:todo-free",
-    prompt: "make me a todo saying this is the chonkiest due by tomorrow",
-    kind: "action",
-    worker: "bee",
-  },
-  { id: "action:todo-add", prompt: "add a todo to buy milk", kind: "action", worker: "bee" },
-  { id: "action:reminder", prompt: "remind me to call mum tomorrow at 9", kind: "action", worker: "mac" },
-  { id: "action:calendar", prompt: "create a calendar event tomorrow at 3pm", kind: "action", worker: "mac" },
-  { id: "action:open", prompt: "open safari", kind: "action", worker: "mac" },
-  { id: "action:music", prompt: "pause the music", kind: "action", worker: "mac" },
-  { id: "action:mail", prompt: "draft an email to bob about lunch", kind: "action", worker: "mac" },
-  { id: "action:imessage", prompt: "text jane that I'm running late", kind: "action", worker: "mac" },
-  {
-    id: "action:net-search",
-    prompt: "search the web for the capital of australia",
-    kind: "action",
-    worker: "net",
-  },
-  { id: "action:net-weather", prompt: "what's the weather in tokyo", kind: "action", worker: "net" },
+  { id: "agent:note-todo", prompt: "Create a note from my todo", kind: "agent" },
+  { id: "agent:notes", prompt: "save this in my notes", kind: "agent" },
+  { id: "agent:note-lunch", prompt: "add a note about lunch", kind: "agent" },
+  { id: "agent:this", prompt: "save this", kind: "agent" },
 
-  {
-    id: "clarify:note-todo",
-    prompt: "Create a note from my todo",
-    kind: "clarify",
-    suggestionIncludes: ["queen todos create", "Mac"],
-  },
-  { id: "clarify:notes", prompt: "save this in my notes", kind: "clarify" },
-  { id: "clarify:note-lunch", prompt: "add a note about lunch", kind: "clarify" },
-  { id: "clarify:this", prompt: "save this", kind: "clarify" },
-
-  { id: "chat:math", prompt: "what is 2 plus 2", kind: "chat" },
-  { id: "chat:joke", prompt: "tell me a joke", kind: "chat" },
-  { id: "chat:greeting", prompt: "hey there", kind: "chat" },
+  { id: "agent:math", prompt: "what is 2 plus 2", kind: "ir" },
+  { id: "agent:joke", prompt: "tell me a joke", kind: "agent" },
+  { id: "agent:greeting", prompt: "hey there", kind: "agent" },
 ];
 
 /**

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 IMAGE="${QUEEN_IMAGE:-ghcr.io/bitanath/queen-bee}"
 TAG="${QUEEN_IMAGE_TAG:-latest}"
 MODEL_FILE="${QUEEN_MODEL_FILE:-LFM2.5-2.6B-Q5_K_M.gguf}"

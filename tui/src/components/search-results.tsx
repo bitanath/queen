@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { TextAttributes } from "@opentui/core";
 
 import { useTheme } from "../theme/use-theme";
+import { loadConfig } from "../documents/config";
 import { Badge, type BadgeVariant } from "./badge";
 import type { SearchResult } from "../utils/answer-view";
 
@@ -46,6 +47,7 @@ export function SearchResults({
   onOpen: (index: number) => void;
 }) {
   const theme = useTheme();
+  const showRelevance = loadConfig().showRelevanceScores;
 
   if (results.length === 0) {
     return (
@@ -73,7 +75,9 @@ export function SearchResults({
                 ? theme.colors.success
                 : theme.colors.border;
         const active = index === selected;
-        const filled = Math.max(1, Math.round((result.score / maxScore) * SCORE_CELLS));
+        const filled = showRelevance
+          ? Math.max(1, Math.round((result.score / maxScore) * SCORE_CELLS))
+          : 0;
         const bar = "▮".repeat(filled) + "▯".repeat(SCORE_CELLS - filled);
 
         return (
@@ -96,7 +100,9 @@ export function SearchResults({
               <Badge variant={variant} bordered={false}>
                 {result.type}
               </Badge>
-              <text fg={theme.colors.mutedForeground}>{`· ${result.when} · ${bar} ${result.score.toFixed(2)}`}</text>
+              <text fg={theme.colors.mutedForeground}>
+                {showRelevance ? `· ${result.when} · ${bar} ${result.score.toFixed(2)}` : `· ${result.when}`}
+              </text>
             </box>
             <text fg={theme.colors.foreground}>{renderMatch(result.title, theme)}</text>
             {result.snippet && result.snippet !== result.title && (
