@@ -12,15 +12,10 @@ Based on and pulls the latest ``bee-cli``. Originally built for the Amazon Devel
 Dependencies
 ------------
 
-``bee-cli`` is pinned by the parent commit. ``elthur`` is my GGUF inference package and is kept on the latest commit.
+``bee-cli`` is pinned by the parent commit. ``elthur`` is my GGUF inference package and is kept on the latest commit. Uses ``strands sdk`` for the agentic loop. There are no runtime dependencies, we build a static binary compiled from sources.
 **All upstream changes are propagated** this ensures the latest versions of both, while maintenance is a clear separation of concerns. 
 ``main`` by the build (``git submodule update --remote``); to freeze a release, build with ``QUEEN_NO_ELTHUR_UPDATE=1`` and commit the resulting gitlink. 
 Both revisions are baked into the binary at build time and shown by ``queen status``.
-
-Notes
-------
-Parts of the codebase have been AI generated. Nearly all generated code is reviewed by me and there are also comprehensive unit tests in order to mitigate any breakages.
-None of the text or the submission to the actual hackathon entry is AI generated.
 
 
 Run TUI
@@ -113,6 +108,11 @@ Credentials
 
 Tokens are stored as dotfiles under ``~/.bee/`` (``token-<env>``, mode 0600) rather than the macOS Keychain. The binary is re-signed on every build, so the
 Keychain would prompt for your login password on each launch.
+
+Notes
+------
+Parts of the codebase have been AI generated. Nearly all generated code is reviewed by me and there are also comprehensive unit tests in order to mitigate any breakages.
+None of the text or the submission to the actual hackathon entry is AI generated.
 
 License
 -------
