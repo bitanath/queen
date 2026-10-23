@@ -8,6 +8,7 @@ out/
 *.tgz
 *.webarchive
 /*.md
+!FRICTION.md
 
 # downloaded models (keep the directory, ignore the GGUFs)
 *.gguf

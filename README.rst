@@ -25,7 +25,7 @@ None of the text or the submission to the actual hackathon entry is AI generated
 
 Run TUI
 --------
-The TUI for ``MacOS`` only is shipped in Releases. Download and place it in ``usr/local/bin`` or any other folder.
+The macOS TUI is shipped in Releases. Download and place the macOS binary in ``usr/local/bin`` or any other folder. For Linux, use the Docker image below.
 Then run like you would any other executable. It is codesigned with my Apple Developer Id, though MacOS verification takes some time on first launch.
 
 
@@ -50,6 +50,42 @@ Plain text commands are agent interpreted (locally) and keywords commands execut
 Recognized subcommands are derived from the pinned ``bee-cli`` registry, so every resource (``todos``, ``facts``, ``insights``, ``journals``, ``conversations``,
 ``locations``, ``search``, …) works. Free text is resolved cheaply: information questions go to Bee search, list/latest reads are deterministic, and actions use
 one local-model tool-selection turn. Ambiguous requests fail fast with a card of runnable suggestions instead of guessing.
+
+Docker
+------
+
+The multi-arch image is published as ``ghcr.io/bitanath/queen-bee:latest`` for
+``linux/amd64`` and ``linux/arm64``. Mount ``~/.bee`` to reuse your Bee
+credentials; without it, generic chat works, but Bee reads and actions are not
+authenticated.
+
+.. code-block:: bash
+
+   docker pull ghcr.io/bitanath/queen-bee:latest
+
+TUI
+~~~
+
+.. code-block:: bash
+
+   docker run --rm -it -v "$HOME/.bee:/root/.bee" ghcr.io/bitanath/queen-bee:latest
+
+CLI
+~~~
+
+.. code-block:: bash
+
+   docker run --rm -v "$HOME/.bee:/root/.bee" ghcr.io/bitanath/queen-bee:latest status
+   docker run --rm -v "$HOME/.bee:/root/.bee" ghcr.io/bitanath/queen-bee:latest "show latest todo"
+
+On Apple Silicon, add ``--platform linux/amd64`` to run the amd64 image through
+Rosetta; omit it (or use ``--platform linux/arm64``) for native arm64.
+
+To build and push the multi-arch image yourself:
+
+.. code-block:: bash
+
+   ./img.sh build
 
 First launch is slow
 --------------------
