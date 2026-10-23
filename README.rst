@@ -51,8 +51,8 @@ Recognized subcommands are derived from the pinned ``bee-cli`` registry, so ever
 ``locations``, ``search``, …) works. Free text is resolved cheaply: information questions go to Bee search, list/latest reads are deterministic, and actions use
 one local-model tool-selection turn. Ambiguous requests fail fast with a card of runnable suggestions instead of guessing.
 
-Docker
-------
+Docker (note: untested)
+-------------------------
 
 The multi-arch image is published as ``ghcr.io/bitanath/queen-bee:latest`` for
 ``linux/amd64`` and ``linux/arm64``. Mount ``~/.bee`` to reuse your Bee
@@ -122,3 +122,8 @@ commercial usage allowed. However, LFM does have a commercial usage cap of USD 1
 
 The embedded LFM2.5 model weights remain under the
 `LFM Open License v1.0 <https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/blob/main/LICENSE>`_.
+
+.. image:: items/queen.png
+   :alt: Queen TUI
+   :align: center
+   :width: 100%
